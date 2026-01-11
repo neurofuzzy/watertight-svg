@@ -12,111 +12,112 @@
 
 <body>
   <div id="app">
-    <header class="header">
-      <h1>Watertight SVG</h1>
-      <p class="subtitle">Optimize SVGs for plotters & cutting machines</p>
-    </header>
-
     <main class="main">
-      <section class="drop-zone" id="dropZone">
-        <div class="drop-content">
-          <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
-          <p class="drop-text">Drop SVG here or <button type="button" id="browseBtn">browse</button></p>
-          <input type="file" id="fileInput" accept=".svg,image/svg+xml" hidden />
-        </div>
-      </section>
-
-      <section class="preview-container" id="previewContainer" hidden>
-        <div class="preview-panel">
+      <div id="workspace" class="workspace">
+        <div class="preview-panel" style="grid-area: original;">
           <h2>Original</h2>
           <div class="preview-canvas" id="originalPreview"></div>
           <div class="stats" id="originalStats"></div>
         </div>
-        <div class="preview-panel">
+
+        <div class="preview-panel" style="grid-area: optimized;">
           <h2>Optimized</h2>
-          <div class="preview-canvas" id="optimizedPreview"></div>
-          <div class="legend">
-            <div class="legend-item"><span class="swatch travel"></span>Travel (Pen Up Move)</div>
-            <div class="legend-item"><span class="swatch pen-up"></span>Lift Point</div>
-            <div class="legend-item"><span class="swatch pen-down"></span>Land Point</div>
+          <div class="canvas-container">
+            <div class="preview-canvas" id="optimizedPreview"></div>
+            <div class="legend">
+              <div class="legend-item"><span class="swatch travel"></span>Travel</div>
+              <div class="legend-item"><span class="swatch pen-up"></span>Up</div>
+              <div class="legend-item"><span class="swatch pen-down"></span>Down</div>
+            </div>
           </div>
           <div class="stats" id="optimizedStats"></div>
         </div>
-      </section>
 
-      <aside class="controls" id="controls" hidden>
-        <h2>Optimization Settings</h2>
+        <section class="drop-zone" id="dropZone" style="grid-area: dropzone;">
+          <div class="drop-content">
+            <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            <p class="drop-text">Drop SVG here or <button type="button" id="browseBtn">browse</button></p>
+            <input type="file" id="fileInput" accept=".svg,image/svg+xml" hidden />
+          </div>
+        </section>
 
-        <div class="control-group">
-          <label>
-            <input type="checkbox" id="breakApart" />
-            Break apart paths (stress test)
-          </label>
-        </div>
-
-        <div class="control-group">
-          <label>
-            <input type="checkbox" id="removeOverdraw" checked />
-            Remove overdraw
-          </label>
-        </div>
-
-        <div class="control-group">
-          <label>
-            <input type="checkbox" id="mergePaths" checked />
-            Merge connected segments
-          </label>
-        </div>
-
-        <div class="control-group">
-          <label class="group-label">Fill Strategy</label>
-          <div class="radio-group">
-            <label class="radio-label">
-              <input type="radio" name="fillStrategy" value="none" />
-              None
-            </label>
-            <label class="radio-label">
-              <input type="radio" name="fillStrategy" value="close" checked />
-              Close Ends
-            </label>
-            <label class="radio-label">
-              <input type="radio" name="fillStrategy" value="regions" />
-              Find Regions
+        <aside class="controls" id="controls" style="grid-area: settings;">
+          <h2>Optimization Settings</h2>
+          <!-- Control content stays same -->
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="breakApart" />
+              Break apart paths (stress test)
             </label>
           </div>
-          <div class="slider-group" id="gapToleranceContainer">
-            <input type="range" id="gapTolerance" min="0" max="10" step="0.5" value="2" />
-            <span id="gapValue">2px</span>
+          <!-- ... -->
+          <!-- I need to include the rest of the controls or use proper start/end lines -->
+          <!-- Using start/end lines to preserve inner content is tricky if I move the whole block. -->
+          <!-- I will copy-paste the controls logic from previous file view content in step 950 -->
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="removeOverdraw" checked />
+              Remove overdraw
+            </label>
           </div>
-        </div>
 
-        <div class="control-group">
-          <label>
-            <input type="checkbox" id="fixWinding" checked />
-            Fix path winding
-          </label>
-          <select id="fillRule">
-            <option value="evenodd">Even-Odd</option>
-            <option value="nonzero">Non-Zero</option>
-          </select>
-        </div>
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="mergePaths" checked />
+              Merge connected segments
+            </label>
+          </div>
 
-        <div class="control-group">
-          <label>
-            <input type="checkbox" id="sortPaths" checked />
-            Optimize path order
-          </label>
-        </div>
+          <div class="control-group">
+            <label class="group-label">Fill Strategy</label>
+            <div class="radio-group">
+              <label class="radio-label">
+                <input type="radio" name="fillStrategy" value="none" />
+                None
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="fillStrategy" value="close" checked />
+                Close Ends
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="fillStrategy" value="regions" />
+                Find Regions
+              </label>
+            </div>
+            <div class="slider-group" id="gapToleranceContainer">
+              <input type="range" id="gapTolerance" min="0" max="10" step="0.5" value="2" />
+              <span id="gapValue">2px</span>
+            </div>
+          </div>
 
-        <div class="actions">
-          <button type="button" id="optimizeBtn" class="btn-primary">Optimize</button>
-          <button type="button" id="exportBtn" class="btn-secondary" disabled>Export SVG</button>
-        </div>
-      </aside>
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="fixWinding" checked />
+              Fix path winding
+            </label>
+            <select id="fillRule">
+              <option value="evenodd">Even-Odd</option>
+              <option value="nonzero">Non-Zero</option>
+            </select>
+          </div>
+
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="sortPaths" checked />
+              Optimize path order
+            </label>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="optimizeBtn" class="btn-primary">Optimize</button>
+            <button type="button" id="exportBtn" class="btn-secondary" disabled>Export SVG</button>
+          </div>
+        </aside>
+      </div>
     </main>
   </div>
   <script type="module" src="/src/main.ts"></script>

@@ -15,12 +15,11 @@ import { PanZoomController } from './ui/panzoom';
 const dropZone = document.getElementById('dropZone')!;
 const fileInput = document.getElementById('fileInput') as HTMLInputElement;
 const browseBtn = document.getElementById('browseBtn')!;
-const previewContainer = document.getElementById('previewContainer')!;
+const workspace = document.getElementById('workspace')!;
 const originalPreview = document.getElementById('originalPreview')!;
 const optimizedPreview = document.getElementById('optimizedPreview')!;
 const originalStats = document.getElementById('originalStats')!;
 const optimizedStats = document.getElementById('optimizedStats')!;
-const controls = document.getElementById('controls')!;
 const optimizeBtn = document.getElementById('optimizeBtn')!;
 const exportBtn = document.getElementById('exportBtn')!;
 
@@ -109,8 +108,8 @@ async function handleFile(file: File) {
 
 // Show the preview section
 function showPreview() {
-    previewContainer.removeAttribute('hidden');
-    controls.removeAttribute('hidden');
+    workspace.removeAttribute('hidden');
+    // controls are inside workspace, so they appear automatically
     dropZone.style.height = '80px';
     dropZone.style.padding = 'var(--space-md)';
 }
