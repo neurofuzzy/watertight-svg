@@ -297,13 +297,25 @@ export function findOrCreateVertex(
     y: number,
     tolerance: number = 0.001
 ): VertexId {
-    // Check for existing vertex within tolerance
+    // Check for existing vertex within tolerance, picking the CLOSEST one
+    let bestDistSq = tolerance * tolerance;
+    let bestId: VertexId | null = null;
+
     for (const [id, vertex] of dcel.vertices) {
         const dx = vertex.x - x;
         const dy = vertex.y - y;
-        if (dx * dx + dy * dy <= tolerance * tolerance) {
-            return id;
+        const distSq = dx * dx + dy * dy;
+
+        if (distSq <= bestDistSq) {
+            bestDistSq = distSq;
+            bestId = id;
+            // Optimization: if exact match, stop early
+            if (distSq < 1e-10) break;
         }
+    }
+
+    if (bestId !== null) {
+        return bestId;
     }
 
     // Create new vertex

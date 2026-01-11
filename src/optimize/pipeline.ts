@@ -4,7 +4,7 @@
 
 import type { Path, OptimizeOptions, PathStats, SVGDocument } from '../geometry/types';
 import { parseSVG } from '../geometry/parser';
-import { pathLength } from '../geometry/math';
+import { pathLength, scalePath } from '../geometry/math';
 import { mergePaths } from './merge';
 import { removeOverdraw } from './overdraw';
 import { sortPathsWithTwoOpt, calculateTravelDistance } from './sort';
@@ -44,11 +44,19 @@ export function optimizeDocument(
 ): OptimizeResult {
     const beforeStats = calculateStats(original.paths);
 
-    // Run optimization steps
-    let paths = [...original.paths];
+    // Scaling Factor to improve precision (10x)
+    const SCALE = 10;
+
+    // Scale UP geometry to avoid floating point issues with small details
+    let paths = original.paths.map(p => scalePath(p, SCALE));
+
+    // Scale UP relevant tolerance options
+    // We clone options to avoid mutating the original object
+    const scaledOptions = { ...options };
+    scaledOptions.gapTolerance *= SCALE;
 
     // Step 0: Break apart paths (stress test)
-    if (options.breakApart) {
+    if (scaledOptions.breakApart) {
         const brokenPaths: Path[] = [];
         for (const path of paths) {
             for (let i = 0; i < path.points.length - 1; i++) {
@@ -71,36 +79,45 @@ export function optimizeDocument(
     }
 
     // Step 1: Remove overdraw (uses tight geometric tolerance)
-    if (options.removeOverdraw) {
-        paths = removeOverdraw(paths); // Uses default 0.01 tolerance
+    if (scaledOptions.removeOverdraw) {
+        paths = removeOverdraw(paths); // Uses default tolerance
     }
 
     // Step 2: Merge connected segments (uses tight geometric tolerance)
-    if (options.mergePaths) {
-        paths = mergePaths(paths); // Uses default 0.001 tolerance
+    if (scaledOptions.mergePaths) {
+        paths = mergePaths(paths); // Uses default tolerance
     }
 
     // Step 3: Fill Strategy & Step 4: Fix Winding
     // We handle these together to optimize performance (only fixing winding on regions)
-    if (options.findRegions) {
+    if (scaledOptions.findRegions) {
         // Determine progress range for regions phase
         // If winding is enabled, regions gets 70% of the bar, winding gets 30%
-        const regionsRange = options.fixWinding ? 0.7 : 1.0;
+        const regionsRange = scaledOptions.fixWinding ? 0.7 : 1.0;
 
-        // Find enclosed regions
-        let regions = findRegions(paths, {
-            tolerance: options.gapTolerance,
+        // Pre-process: Bridge gaps using the user's gap tolerance (now scaled)
+        // This ensures the graph is connected without snapping vertices globally
+        const bridgedPaths = autoClosePaths(paths, scaledOptions.gapTolerance);
+
+        // Find enclosed regions (Flash-style fills)
+        // Use STRICT tolerance to preserve geometry detail.
+        // We rely on autoClosePaths above to bridge gaps explicitly.
+        // 0.1 unscaled pixels -> 0.1 * SCALE in scaled space
+        const STRICT_TOLERANCE = 0.1 * SCALE;
+
+        let regions = findRegions(bridgedPaths, {
+            tolerance: STRICT_TOLERANCE,
             onProgress: onProgress ? (p) => onProgress(p * regionsRange) : undefined
         });
 
         // Step 4: Fix winding for regions
         // OPTIMIZATION: Only run winding correction on the newly found regions
         // This avoids O(N^2) checks against the thousands of original stroke segments
-        if (options.fixWinding) {
+        if (scaledOptions.fixWinding) {
             const rangeStart = 0.7;
             const rangeWidth = 0.3;
 
-            regions = fixWinding(regions, options.fillRule, onProgress ? (p) => {
+            regions = fixWinding(regions, scaledOptions.fillRule, onProgress ? (p) => {
                 onProgress(rangeStart + (p * rangeWidth));
             } : undefined);
         }
@@ -109,21 +126,24 @@ export function optimizeDocument(
         // REPLACE original paths with regions to avoid duplicates
         paths = [...regions];
 
-    } else if (options.closePaths) {
+    } else if (scaledOptions.closePaths) {
         // Close nearly-closed paths (Simple)
-        paths = autoClosePaths(paths, options.gapTolerance);
+        paths = autoClosePaths(paths, scaledOptions.gapTolerance);
 
         // Step 4: Fix winding for closed paths
         // In the "Close Paths" strategy, we operate on the original paths
-        if (options.fixWinding) {
-            paths = fixWinding(paths, options.fillRule, onProgress);
+        if (scaledOptions.fixWinding) {
+            paths = fixWinding(paths, scaledOptions.fillRule, onProgress);
         }
     }
 
     // Step 5: Sort paths to minimize travel
-    if (options.sortPaths) {
+    if (scaledOptions.sortPaths) {
         paths = sortPathsWithTwoOpt(paths);
     }
+
+    // Scale DOWN geometry before returning
+    paths = paths.map(p => scalePath(p, 1 / SCALE));
 
     const optimized: SVGDocument = {
         ...original,

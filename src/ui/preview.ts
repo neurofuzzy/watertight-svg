@@ -21,7 +21,7 @@ export interface PreviewOptions {
 const defaultOptions: PreviewOptions = {
     showTravel: true,
     drawColor: '#e0e0e8',
-    travelColor: 'rgba(255, 150, 50, 0.15)',
+    travelColor: 'rgba(255, 80, 255, 0.5)',
     fillColor: 'rgba(130, 180, 255, 0.35)',
     strokeWidth: 1.5,
 };

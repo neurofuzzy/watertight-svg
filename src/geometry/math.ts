@@ -7,6 +7,14 @@ import type { Point, Segment, Path, BoundingBox } from './types';
 /** Tolerance for floating point comparisons */
 const EPSILON = 1e-10;
 
+/** Scale a path by a factor */
+export function scalePath(path: Path, scale: number): Path {
+    return {
+        ...path,
+        points: path.points.map(p => ({ x: p.x * scale, y: p.y * scale }))
+    };
+}
+
 /** Calculate distance between two points */
 export function distance(a: Point, b: Point): number {
     const dx = b.x - a.x;
