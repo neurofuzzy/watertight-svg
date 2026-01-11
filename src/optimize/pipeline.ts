@@ -75,6 +75,13 @@ export function optimizeDocument(
                 });
             }
         }
+
+        // Shuffle segments to stress-test sorting/merging (Fisher-Yates)
+        for (let i = brokenPaths.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [brokenPaths[i], brokenPaths[j]] = [brokenPaths[j], brokenPaths[i]];
+        }
+
         paths = brokenPaths;
     }
 

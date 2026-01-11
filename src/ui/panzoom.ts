@@ -23,36 +23,57 @@ export class PanZoomController {
 
         if (svgs.length === 0) return;
 
-        // Get dimensions from first SVG
-        // We assume all SVGs share the same coordinate space/aspect ratio
+        // Get dimensions from first SVG content
         const vb = svgs[0].viewBox.baseVal;
 
-        if (reset || this.originalViewBox.w === 0) {
-            this.originalViewBox = { x: vb.x, y: vb.y, w: vb.width, h: vb.height };
-            this.viewBox = { ...this.originalViewBox };
+        // Measure the PARENT container because the SVG might not have layout yet
+        // or might be constrained. We want to fill the parent.
+        const parent = svgs[0].parentElement;
+        const rect = parent ? parent.getBoundingClientRect() : svgs[0].getBoundingClientRect();
+
+        // Target Aspect Ratio (Container)
+        // Guard against 0 height
+        const containerAR = rect.height > 0 ? rect.width / rect.height : vb.width / vb.height;
+        const contentAR = vb.height > 0 ? vb.width / vb.height : 1;
+
+        // Calculate corrected ViewBox that encloses content but matches container AR
+        let newW = vb.width;
+        let newH = vb.height;
+        let newX = vb.x;
+        let newY = vb.y;
+
+        if (containerAR > contentAR) {
+            // Container is wider than content -> Increase Width
+            newW = newH * containerAR;
+            // Center horizontally
+            newX = vb.x - (newW - vb.width) / 2;
         } else {
-            // Validate if dimensions changed significantly (new file load)
-            // If aspect ratio or scale is wildly different, force reset
-            if (Math.abs(vb.width - this.originalViewBox.w) > 1 || Math.abs(vb.height - this.originalViewBox.h) > 1) {
-                this.originalViewBox = { x: vb.x, y: vb.y, w: vb.width, h: vb.height };
-                this.viewBox = { ...this.originalViewBox };
-            }
+            // Container is taller than content -> Increase Height
+            newH = newW / containerAR;
+            // Center vertically
+            newY = vb.y - (newH - vb.height) / 2;
+        }
+
+        if (reset || this.originalViewBox.w === 0) {
+            this.originalViewBox = { x: newX, y: newY, w: newW, h: newH };
+            this.viewBox = { ...this.originalViewBox };
         }
 
         // Apply current viewbox to new elements
         this.update();
 
-        // Attach listeners to CONTAINERS (parent of SVG) to capture events even if pointer-events:none on SVG?
-        // Actually SVG itself is fine if it has pointer-events: all.
-        // But `renderPreview` replaces SVGs.
-
+        // Attach listeners
         svgs.forEach(svg => {
-            // wrapper for binding 'this'
+            // FORCE fill by disabling native AR handling. 
+            // We are mathematically guaranteeing AR match via viewBox padding above.
+            svg.setAttribute('preserveAspectRatio', 'none');
+            svg.style.display = 'block'; // Remove inline gaps
+
             const onWheel = (e: WheelEvent) => this.handleWheel(e);
             const onDown = (e: MouseEvent) => this.handleDown(e);
             const onMove = (e: MouseEvent) => this.handleMove(e);
             const onUp = (e: MouseEvent) => this.handleUp(e);
-            const onLeave = (e: MouseEvent) => this.handleUp(e); // Stop panning if leaving
+            const onLeave = (e: MouseEvent) => this.handleUp(e);
 
             svg.addEventListener('wheel', onWheel, { passive: false });
             svg.addEventListener('mousedown', onDown);
@@ -60,7 +81,6 @@ export class PanZoomController {
             svg.addEventListener('mouseup', onUp);
             svg.addEventListener('mouseleave', onLeave);
 
-            // Set cursor style
             svg.style.cursor = 'grab';
 
             this.cleanupFns.push(() => {
@@ -93,16 +113,10 @@ export class PanZoomController {
         const delta = e.deltaY;
         const scale = 1 + delta * zoomSpeed;
 
-        // Clamp zoom?
-        // Prevent zooming out too far? 
-        // Prevent zooming in to 0?
-
-        // Calculate mouse position relative to SVG coordinates
-        // This is tricky because we are modifying viewBox.
-        // We need the mouse position in "SVG Units" BEFORE the zoom.
-
         const svg = e.currentTarget as SVGSVGElement;
-        const rect = svg.getBoundingClientRect();
+        const parent = svg.parentElement;
+        const rect = parent ? parent.getBoundingClientRect() : svg.getBoundingClientRect();
+
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
 
@@ -118,10 +132,6 @@ export class PanZoomController {
         // Apply Zoom
         const newW = svgW * scale;
         const newH = svgH * scale;
-
-        // Adjust x/y so that mouseSvgX/Y remains stationary
-        // newX + (mx/screenW) * newW = mouseSvgX
-        // newX = mouseSvgX - (mx/screenW) * newW
 
         this.viewBox.w = newW;
         this.viewBox.h = newH;
@@ -147,11 +157,10 @@ export class PanZoomController {
 
         this.lastMouse = { x: e.clientX, y: e.clientY };
 
-        // Convert screen delta to SVG delta
         const svg = e.currentTarget as SVGSVGElement;
-        const rect = svg.getBoundingClientRect();
+        const parent = svg.parentElement;
+        const rect = parent ? parent.getBoundingClientRect() : svg.getBoundingClientRect();
 
-        // Scale factor: SVG units per Screen pixel
         const scaleX = this.viewBox.w / rect.width;
         const scaleY = this.viewBox.h / rect.height;
 
