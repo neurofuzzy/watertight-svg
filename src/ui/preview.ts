@@ -22,7 +22,7 @@ const defaultOptions: PreviewOptions = {
     showTravel: true,
     drawColor: '#e0e0e8',
     travelColor: 'rgba(255, 150, 50, 0.15)',
-    fillColor: 'rgba(100, 140, 255, 0.1)',
+    fillColor: 'rgba(130, 180, 255, 0.35)',
     strokeWidth: 1.5,
 };
 

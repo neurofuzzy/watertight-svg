@@ -45,8 +45,17 @@ function pathToSVGPath(path: Path): string {
         attrs.push('stroke-width="1"');
     }
 
-    if (path.closed && path.meta?.fill && path.meta.fill !== 'none') {
-        attrs.push(`fill="${path.meta.fill}"`);
+    // Handle fills
+    if (path.closed) {
+        if (path.meta?.isRegion) {
+            // Detected regions get a semi-transparent fill
+            attrs.push('fill="rgba(100, 150, 255, 0.3)"');
+        } else if (path.meta?.fill && path.meta.fill !== 'none') {
+            attrs.push(`fill="${path.meta.fill}"`);
+        } else {
+            // Default semi-transparent fill for closed paths
+            attrs.push('fill="rgba(150, 150, 150, 0.2)"');
+        }
     } else {
         attrs.push('fill="none"');
     }

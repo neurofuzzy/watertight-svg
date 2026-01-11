@@ -79,6 +79,8 @@ export interface PathStats {
 
 /** Optimization options */
 export interface OptimizeOptions {
+    /** Break apart all paths into individual segments (stress test) */
+    breakApart: boolean;
     /** Merge connected segments into paths */
     mergePaths: boolean;
     /** Remove overlapping/duplicate segments */
@@ -99,6 +101,7 @@ export interface OptimizeOptions {
 
 /** Default optimization options */
 export const DEFAULT_OPTIONS: OptimizeOptions = {
+    breakApart: false,
     mergePaths: true,
     removeOverdraw: true,
     sortPaths: true,
