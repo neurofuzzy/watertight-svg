@@ -26,37 +26,78 @@ export interface OptimizeResult {
 /**
  * Run the full optimization pipeline on an SVG string.
  */
+/**
+ * Run the full optimization pipeline on an SVG string.
+ * NOTE: This parses the SVG on the main thread (using DOM).
+ */
 export function optimize(svgString: string, options: OptimizeOptions): OptimizeResult {
     // Parse the SVG
     const original = parseSVG(svgString);
+    return optimizeDocument(original, options);
+}
+
+/**
+ * Run optimization on an already parsed SVG document.
+ * This can be run in a worker since it doesn't use the DOM parser.
+ */
+export function optimizeDocument(
+    original: SVGDocument,
+    options: OptimizeOptions,
+    onProgress?: (percent: number) => void
+): OptimizeResult {
     const beforeStats = calculateStats(original.paths);
 
     // Run optimization steps
     let paths = [...original.paths];
 
-    // Step 1: Merge connected segments (uses tight geometric tolerance)
-    if (options.mergePaths) {
-        paths = mergePaths(paths); // Uses default 0.001 tolerance
+    // Step 0: Break apart paths (stress test)
+    if (options.breakApart) {
+        const brokenPaths: Path[] = [];
+        for (const path of paths) {
+            for (let i = 0; i < path.points.length - 1; i++) {
+                brokenPaths.push({
+                    points: [path.points[i], path.points[i + 1]],
+                    closed: false,
+                    meta: path.meta
+                });
+            }
+            // If closed, add closing segment
+            if (path.closed && path.points.length > 1) {
+                brokenPaths.push({
+                    points: [path.points[path.points.length - 1], path.points[0]],
+                    closed: false,
+                    meta: path.meta
+                });
+            }
+        }
+        paths = brokenPaths;
     }
 
-    // Step 2: Remove overdraw (uses tight geometric tolerance)
+    // Step 1: Remove overdraw (uses tight geometric tolerance)
     if (options.removeOverdraw) {
         paths = removeOverdraw(paths); // Uses default 0.01 tolerance
     }
 
-    // Step 3: Find enclosed regions (Flash-style fills)
-    if (options.findRegions) {
-        const regions = findRegions(paths, { tolerance: options.gapTolerance });
-        // Add detected regions to the path list
-        paths = [...paths, ...regions];
+    // Step 2: Merge connected segments (uses tight geometric tolerance)
+    if (options.mergePaths) {
+        paths = mergePaths(paths); // Uses default 0.001 tolerance
     }
 
-    // Step 4: Close nearly-closed paths
-    if (options.closePaths) {
+    // Step 3: Fill Strategy (Mutually Exclusive ideally, but enforced by order here)
+    if (options.findRegions) {
+        // Find enclosed regions (Flash-style fills)
+        const regions = findRegions(paths, {
+            tolerance: options.gapTolerance,
+            onProgress: onProgress
+        });
+        // Add detected regions to the path list
+        paths = [...paths, ...regions];
+    } else if (options.closePaths) {
+        // Close nearly-closed paths (Simple)
         paths = autoClosePaths(paths, options.gapTolerance);
     }
 
-    // Step 5: Fix winding for nested shapes
+    // Step 4: Fix winding for nested shapes
     if (options.fixWinding) {
         paths = fixWinding(paths, options.fillRule);
     }

@@ -28,10 +28,30 @@ const EPSILON = 1e-10;
  * Uses a brute-force O(n²) approach for simplicity.
  * For large inputs, Bentley-Ottmann would be O((n + k) log n).
  */
-export function findAllIntersections(segments: Segment[], tolerance: number = 0.001): Intersection[] {
+/**
+ * Find all intersection points between a set of segments.
+ * Uses a brute-force O(n²) approach for simplicity.
+ * For large inputs, Bentley-Ottmann would be O((n + k) log n).
+ */
+export function findAllIntersections(
+    segments: Segment[],
+    tolerance: number = 0.001,
+    onProgress?: (percent: number) => void
+): Intersection[] {
     const intersections: Map<string, Intersection> = new Map();
+    const total = segments.length;
+    let lastReport = 0;
 
     for (let i = 0; i < segments.length; i++) {
+        // Report progress every ~1% or so to avoid spamming
+        if (onProgress) {
+            const now = Date.now();
+            if (now - lastReport > 100) { // Throttle to 100ms
+                onProgress(i / total);
+                lastReport = now;
+            }
+        }
+
         for (let j = i + 1; j < segments.length; j++) {
             const intersection = segmentIntersection(segments[i], segments[j]);
 
@@ -56,6 +76,8 @@ export function findAllIntersections(segments: Segment[], tolerance: number = 0.
             }
         }
     }
+
+    if (onProgress) onProgress(1.0); // Ensure 100% at end
 
     return Array.from(intersections.values());
 }

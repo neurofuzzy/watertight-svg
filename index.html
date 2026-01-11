@@ -75,18 +75,22 @@
         </div>
 
         <div class="control-group">
-          <label>
-            <input type="checkbox" id="findRegions" />
-            Find enclosed regions (Flash-style)
-          </label>
-        </div>
-
-        <div class="control-group">
-          <label>
-            <input type="checkbox" id="closePaths" checked />
-            Close paths with gap tolerance
-          </label>
-          <div class="slider-group">
+          <label class="group-label">Fill Strategy</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="fillStrategy" value="none" />
+              None
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="fillStrategy" value="close" checked />
+              Close Ends
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="fillStrategy" value="regions" />
+              Find Regions
+            </label>
+          </div>
+          <div class="slider-group" id="gapToleranceContainer">
             <input type="range" id="gapTolerance" min="0" max="10" step="0.5" value="2" />
             <span id="gapValue">2px</span>
           </div>

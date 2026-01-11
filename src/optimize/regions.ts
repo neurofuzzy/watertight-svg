@@ -25,6 +25,8 @@ export interface RegionFindingOptions {
     includeOuterFace: boolean;
     /** Minimum area threshold for valid regions */
     minArea: number;
+    /** Callback for progress updates (0-1) */
+    onProgress?: (percent: number) => void;
 }
 
 const defaultOptions: RegionFindingOptions = {
@@ -47,7 +49,7 @@ export function findRegions(paths: Path[], options: Partial<RegionFindingOptions
     if (segments.length === 0) return [];
 
     // Step 2: Find all intersections
-    const intersections = findAllIntersections(segments, opts.tolerance);
+    const intersections = findAllIntersections(segments, opts.tolerance, opts.onProgress);
 
     // Step 3: Split segments at intersection points
     const splitSegments = splitAllSegments(segments, intersections);
