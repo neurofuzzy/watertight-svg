@@ -188,3 +188,62 @@ export function autoClosePaths(paths: Path[], gapTolerance: number = 2): Path[] 
 
     return result;
 }
+
+/**
+ * Bridge gaps by connecting open endpoints to the nearest segment within tolerance.
+ * This handles T-junctions where a line ends near another line but doesn't touch.
+ */
+import { pathsToSegments, type Segment } from '../geometry/intersection';
+import { pointToSegmentDistance, projectPointToSegment } from '../geometry/math';
+
+export function bridgeGaps(paths: Path[], tolerance: number): Path[] {
+    const result = [...paths];
+    const segments = pathsToSegments(paths);
+    const EPSILON = 1e-4; // Minimum gap to bridge (avoid self-snapping)
+
+    // Collect all open endpoints
+    const endpoints: { point: Point, pathId: number, isStart: boolean }[] = [];
+    paths.forEach((p, i) => {
+        if (!p.closed && p.points.length > 0) {
+            endpoints.push({ point: pathStart(p), pathId: i, isStart: true });
+            endpoints.push({ point: pathEnd(p), pathId: i, isStart: false });
+        }
+    });
+
+    const bridges: Path[] = [];
+
+    for (const ep of endpoints) {
+        let bestDist = tolerance;
+        let bestPoint: Point | null = null;
+
+        for (const seg of segments) {
+            // Adapt intersection Segment (p1, p2) to geometry Segment (start, end)
+            const geometrySeg = { start: seg.p1, end: seg.p2 };
+
+            // Calculate distance from endpoint to segment
+            const dist = pointToSegmentDistance(ep.point, geometrySeg);
+
+            // Check if within tolerance but not too close (avoid 0-length bridges to self)
+            if (dist > EPSILON && dist <= bestDist) {
+                bestDist = dist;
+                bestPoint = projectPointToSegment(ep.point, geometrySeg);
+            }
+        }
+
+        if (bestPoint) {
+            // Create a bridge segment
+            bridges.push({
+                points: [ep.point, bestPoint],
+                closed: false,
+                meta: {
+                    // @ts-ignore - Adding custom meta property
+                    isBridge: true,
+                    // Preserve original meta
+                    ...paths[ep.pathId].meta
+                }
+            });
+        }
+    }
+
+    return [...result, ...bridges];
+}

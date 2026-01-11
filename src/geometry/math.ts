@@ -256,6 +256,29 @@ export function pointToSegmentDistance(point: Point, segment: Segment): number {
 }
 
 /**
+ * Project a point onto a line segment.
+ * Returns the closest point on the segment.
+ */
+export function projectPointToSegment(point: Point, segment: Segment): Point {
+    const dx = segment.end.x - segment.start.x;
+    const dy = segment.end.y - segment.start.y;
+    const lengthSq = dx * dx + dy * dy;
+
+    if (lengthSq < EPSILON) {
+        return segment.start;
+    }
+
+    const t = Math.max(0, Math.min(1,
+        ((point.x - segment.start.x) * dx + (point.y - segment.start.y) * dy) / lengthSq
+    ));
+
+    return {
+        x: segment.start.x + t * dx,
+        y: segment.start.y + t * dy,
+    };
+}
+
+/**
  * Check if two segments overlap (are collinear and share length).
  * Returns the overlapping segment if they do, null otherwise.
  */

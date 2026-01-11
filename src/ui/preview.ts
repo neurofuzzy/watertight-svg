@@ -63,19 +63,45 @@ export function renderPreview(
             if (path.points.length === 0) continue;
 
             const start = path.points[0];
+            const end = path.points[path.points.length - 1];
+
             if (lastPoint.x !== start.x || lastPoint.y !== start.y) {
+                // Travel Line
                 const travelLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                 travelLine.setAttribute('x1', String(lastPoint.x));
                 travelLine.setAttribute('y1', String(lastPoint.y));
                 travelLine.setAttribute('x2', String(start.x));
                 travelLine.setAttribute('y2', String(start.y));
                 travelLine.setAttribute('stroke', opts.travelColor!);
-                travelLine.setAttribute('stroke-width', String(opts.strokeWidth! * 0.5));
+                travelLine.setAttribute('stroke-width', String(opts.strokeWidth! * 1.5)); // Thicker
                 travelLine.setAttribute('stroke-dasharray', '4 2');
                 travelGroup.appendChild(travelLine);
+
+                // Pen Up (Lift) Point - Blue Circle at lastPoint
+                // Only if lastPoint is not 0,0 (start of doc)
+                if (lastPoint.x !== 0 || lastPoint.y !== 0) {
+                    const penUp = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    penUp.setAttribute('cx', String(lastPoint.x));
+                    penUp.setAttribute('cy', String(lastPoint.y));
+                    penUp.setAttribute('r', String(opts.strokeWidth! * 2));
+                    penUp.setAttribute('fill', 'none');
+                    penUp.setAttribute('stroke', '#0088ff'); // Blue
+                    penUp.setAttribute('stroke-width', String(opts.strokeWidth));
+                    travelGroup.appendChild(penUp);
+                }
+
+                // Pen Down (Land) Point - Brown Circle at start
+                const penDown = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                penDown.setAttribute('cx', String(start.x));
+                penDown.setAttribute('cy', String(start.y));
+                penDown.setAttribute('r', String(opts.strokeWidth! * 2));
+                penDown.setAttribute('fill', 'none');
+                penDown.setAttribute('stroke', '#a52a2a'); // Brown
+                penDown.setAttribute('stroke-width', String(opts.strokeWidth));
+                travelGroup.appendChild(penDown);
             }
 
-            lastPoint = path.points[path.points.length - 1];
+            lastPoint = end;
         }
     }
 
@@ -98,16 +124,29 @@ export function renderPreview(
         fillGroup.appendChild(fillPath);
     }
 
+    // Pastel palette for distinguishing stroke contiguity
+    const PALETTE = [
+        '#FF99AA', // Bright Pastel Red
+        '#88FF88', // Bright Pastel Green
+        '#88AAFF', // Bright Pastel Blue
+        '#FFFF66', // Bright Pastel Yellow
+        '#FF88FF'  // Bright Pastel Magenta
+    ];
+
     // Render draw paths
+    let drawIndex = 0;
     for (const path of doc.paths) {
         if (path.points.length < 2) continue;
+
+        const strokeColor = PALETTE[drawIndex % PALETTE.length];
+        drawIndex++;
 
         const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         const points = path.points.map(p => `${p.x},${p.y}`).join(' ');
         pathEl.setAttribute('points', points);
         pathEl.setAttribute('fill', 'none');
-        // Always use our draw color, ignore original stroke
-        pathEl.setAttribute('stroke', opts.drawColor!);
+        // Always use our cyclic color, ignore original stroke
+        pathEl.setAttribute('stroke', strokeColor);
         pathEl.setAttribute('stroke-width', String(opts.strokeWidth));
         pathEl.setAttribute('stroke-linecap', 'round');
         pathEl.setAttribute('stroke-linejoin', 'round');
@@ -122,7 +161,7 @@ export function renderPreview(
                 closingLine.setAttribute('y1', String(end.y));
                 closingLine.setAttribute('x2', String(start.x));
                 closingLine.setAttribute('y2', String(start.y));
-                closingLine.setAttribute('stroke', opts.drawColor!);
+                closingLine.setAttribute('stroke', strokeColor);
                 closingLine.setAttribute('stroke-width', String(opts.strokeWidth));
                 drawGroup.appendChild(closingLine);
             }

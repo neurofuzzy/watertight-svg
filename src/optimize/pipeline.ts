@@ -8,7 +8,7 @@ import { pathLength, scalePath } from '../geometry/math';
 import { mergePaths } from './merge';
 import { removeOverdraw } from './overdraw';
 import { sortPathsWithTwoOpt, calculateTravelDistance } from './sort';
-import { autoClosePaths } from './fill';
+import { autoClosePaths, bridgeGaps } from './fill';
 import { fixWinding } from './winding';
 import { findRegions } from './regions';
 
@@ -96,12 +96,15 @@ export function optimizeDocument(
         const regionsRange = scaledOptions.fixWinding ? 0.7 : 1.0;
 
         // Pre-process: Bridge gaps using the user's gap tolerance (now scaled)
-        // This ensures the graph is connected without snapping vertices globally
-        const bridgedPaths = autoClosePaths(paths, scaledOptions.gapTolerance);
+        // 1. Close endpoint-to-endpoint gaps
+        let bridgedPaths = autoClosePaths(paths, scaledOptions.gapTolerance);
+
+        // 2. Bridge T-junction gaps (point-to-segment)
+        bridgedPaths = bridgeGaps(bridgedPaths, scaledOptions.gapTolerance);
 
         // Find enclosed regions (Flash-style fills)
         // Use STRICT tolerance to preserve geometry detail.
-        // We rely on autoClosePaths above to bridge gaps explicitly.
+        // We rely on autoClosePaths + bridgeGaps above to bridge all gaps explicitly.
         // 0.1 unscaled pixels -> 0.1 * SCALE in scaled space
         const STRICT_TOLERANCE = 0.1 * SCALE;
 

@@ -9,6 +9,7 @@ import { formatStats, type OptimizeResult } from './optimize';
 import type { WorkerMessage, WorkerResponse } from './worker';
 import { renderPreview } from './ui/preview';
 import { downloadSVG } from './ui/export';
+import { PanZoomController } from './ui/panzoom';
 
 // DOM Elements
 const dropZone = document.getElementById('dropZone')!;
@@ -37,9 +38,11 @@ const fillRuleInput = document.getElementById('fillRule') as HTMLSelectElement;
 // Application state
 let currentSVG: string | null = null;
 let currentResult: OptimizeResult | null = null;
+let shouldResetZoom = false;
 
 // Worker Management
 let worker: Worker | null = null;
+const panZoom = new PanZoomController();
 
 // Initialize
 function init() {
@@ -95,6 +98,7 @@ async function handleFile(file: File) {
 
     try {
         currentSVG = await file.text();
+        shouldResetZoom = true;
         showPreview();
         runOptimization();
     } catch (error) {
@@ -284,6 +288,15 @@ function handleOptimizationSuccess(result: OptimizeResult) {
     renderPreview(optimizedPreview, currentResult.optimized, {
         showTravel: true,
     });
+
+    // Attach Pan/Zoom controller
+    const originalSvg = originalPreview.querySelector('svg');
+    const optimizedSvg = optimizedPreview.querySelector('svg');
+
+    if (originalSvg && optimizedSvg) {
+        panZoom.attach([originalSvg, optimizedSvg], shouldResetZoom);
+        shouldResetZoom = false;
+    }
 
     // Update stats
     originalStats.textContent = formatStats(currentResult.beforeStats);
