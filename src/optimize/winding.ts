@@ -1,189 +1,171 @@
 /**
- * Shape-within-Shape Detection and Path Winding Correction
- * Fixes winding direction for proper fills with nested shapes
+ * Raster-based Winding Correction
+ * Uses OffscreenCanvas and additive blending to robustly detect nesting depth.
  */
 
 import type { Path } from '../geometry/types';
 import {
-    centroid,
-    pointInPolygonEvenOdd,
-
-    signedArea,
     isCounterClockwise,
-    pathBounds
+    pathsBounds,
+    findInteriorPoint
 } from '../geometry/math';
 
 type FillRule = 'evenodd' | 'nonzero';
 
 /**
- * Detect nested shapes and correct their winding direction
- * based on the specified fill rule.
+ * Detect nested shapes and correct their winding direction using raster analysis.
  */
-export function fixWinding(paths: Path[], fillRule: FillRule = 'evenodd'): Path[] {
-    // Only process closed paths
+export function fixWinding(
+    paths: Path[],
+    _fillRule: FillRule = 'evenodd',
+    onProgress?: (percent: number) => void
+): Path[] {
+    // Only process closed paths (open paths don't have winding)
     const closedPaths = paths.filter(p => p.closed && p.points.length >= 3);
     const openPaths = paths.filter(p => !p.closed || p.points.length < 3);
 
     if (closedPaths.length === 0) {
+        if (onProgress) onProgress(1);
         return paths;
     }
 
-    // Build containment hierarchy
-    const hierarchy = buildContainmentHierarchy(closedPaths);
+    try {
+        // Run raster analysis
+        const directions = analyzeWindingRaster(closedPaths, onProgress);
 
-    // Fix winding based on depth and fill rule
-    const fixedClosed = closedPaths.map((path, index) => {
-        const depth = hierarchy.depths[index];
-        const shouldBeCCW = getCorrectWinding(depth, fillRule);
-        const isCCW = isCounterClockwise(path.points);
+        // Apply corrections
+        const fixedClosed = closedPaths.map((path, index) => {
+            const shouldBeCCW = directions[index];
+            const isCCW = isCounterClockwise(path.points);
 
-        if (shouldBeCCW !== isCCW) {
-            // Reverse the path
-            return {
-                ...path,
-                points: [...path.points].reverse(),
-            };
-        }
-
-        return path;
-    });
-
-    return [...fixedClosed, ...openPaths];
-}
-
-interface ContainmentHierarchy {
-    /** Parent index for each path (-1 if no parent) */
-    parents: number[];
-    /** Depth in hierarchy (0 = outermost) */
-    depths: number[];
-    /** Children indices for each path */
-    children: number[][];
-}
-
-/**
- * Build a hierarchy of which paths contain which other paths.
- */
-function buildContainmentHierarchy(paths: Path[]): ContainmentHierarchy {
-    const n = paths.length;
-    const parents: number[] = new Array(n).fill(-1);
-    const children: number[][] = paths.map(() => []);
-
-    // For each path, find which other paths contain it
-    for (let i = 0; i < n; i++) {
-        const pathI = paths[i];
-        const centerI = centroid(pathI.points);
-
-        let bestParent = -1;
-        let bestParentArea = Infinity;
-
-        for (let j = 0; j < n; j++) {
-            if (i === j) continue;
-
-            const pathJ = paths[j];
-
-            // Quick bounding box check
-            if (!boundsContain(pathBounds(pathJ), pathBounds(pathI))) {
-                continue;
+            if (shouldBeCCW !== isCCW) {
+                // Reverse the path
+                return {
+                    ...path,
+                    points: [...path.points].reverse(),
+                };
             }
+            return path;
+        });
 
-            // Check if center of pathI is inside pathJ
-            if (pointInPolygonEvenOdd(centerI, pathJ.points)) {
-                // pathJ contains pathI
-                // We want the smallest containing path (immediate parent)
-                const areaJ = Math.abs(signedArea(pathJ.points));
-                if (areaJ < bestParentArea) {
-                    bestParent = j;
-                    bestParentArea = areaJ;
-                }
-            }
-        }
+        if (onProgress) onProgress(1);
+        return [...fixedClosed, ...openPaths];
 
-        parents[i] = bestParent;
-        if (bestParent !== -1) {
-            children[bestParent].push(i);
-        }
-    }
-
-    // Calculate depths from parent relationships
-    const depths: number[] = new Array(n).fill(0);
-    for (let i = 0; i < n; i++) {
-        let depth = 0;
-        let current = parents[i];
-        while (current !== -1) {
-            depth++;
-            current = parents[current];
-        }
-        depths[i] = depth;
-    }
-
-    return { parents, depths, children };
-}
-
-/**
- * Check if bounds A contains bounds B
- */
-function boundsContain(
-    a: { minX: number; minY: number; maxX: number; maxY: number },
-    b: { minX: number; minY: number; maxX: number; maxY: number }
-): boolean {
-    return a.minX <= b.minX && a.minY <= b.minY &&
-        a.maxX >= b.maxX && a.maxY >= b.maxY;
-}
-
-/**
- * Determine correct winding direction based on depth and fill rule.
- * 
- * For even-odd rule:
- * - All shapes should be in the same direction (typically CCW)
- * 
- * For non-zero rule:
- * - Even depths (0, 2, 4, ...): Counter-clockwise (fills)
- * - Odd depths (1, 3, 5, ...): Clockwise (holes)
- */
-function getCorrectWinding(depth: number, fillRule: FillRule): boolean {
-    if (fillRule === 'evenodd') {
-        // For even-odd, winding doesn't matter for correctness,
-        // but we'll use CCW for consistency
-        return true;
-    } else {
-        // For non-zero, alternate winding to create holes
-        return depth % 2 === 0;
+    } catch (error) {
+        console.error('Raster winding failed, falling back to original paths:', error);
+        return paths;
     }
 }
 
 /**
- * Analyze paths to report their containment relationships.
- * Useful for debugging and visualization.
+ * Use OffscreenCanvas to determine proper winding direction for each path.
  */
-export function analyzeNesting(paths: Path[]): NestingAnalysis {
-    const closedPaths = paths.filter(p => p.closed && p.points.length >= 3);
-    const hierarchy = buildContainmentHierarchy(closedPaths);
+function analyzeWindingRaster(
+    paths: Path[],
+    onProgress?: (percent: number) => void
+): boolean[] {
+    // 1. Setup Canvas
+    const MAX_SIZE = 1024;
+    const bounds = pathsBounds(paths);
+    const width = bounds.maxX - bounds.minX;
+    const height = bounds.maxY - bounds.minY;
 
-    return {
-        pathCount: closedPaths.length,
-        maxDepth: Math.max(...hierarchy.depths, 0),
-        hierarchy: closedPaths.map((path, i) => ({
-            index: i,
-            depth: hierarchy.depths[i],
-            parentIndex: hierarchy.parents[i],
-            childCount: hierarchy.children[i].length,
-            isCCW: isCounterClockwise(path.points),
-            area: Math.abs(signedArea(path.points)),
-        })),
-    };
-}
+    // Avoid zero-size canvas
+    if (width <= 0 || height <= 0) {
+        return paths.map(() => true); // Default to CCW
+    }
 
-export interface NestingAnalysis {
-    pathCount: number;
-    maxDepth: number;
-    hierarchy: PathInfo[];
-}
+    const scale = Math.min(
+        MAX_SIZE / width,
+        MAX_SIZE / height
+    );
 
-interface PathInfo {
-    index: number;
-    depth: number;
-    parentIndex: number;
-    childCount: number;
-    isCCW: boolean;
-    area: number;
+    const canvasWidth = Math.ceil(width * scale) + 2; // +2 padding
+    const canvasHeight = Math.ceil(height * scale) + 2;
+
+    const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
+    const ctx = canvas.getContext('2d')!;
+
+    if (!ctx) {
+        throw new Error('Could not get OffscreenCanvas context');
+    }
+
+    // 2. Render all paths with additive blending
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    ctx.globalCompositeOperation = 'lighter';
+    // Use #111111 (decimal 17) for each layer
+    ctx.fillStyle = '#111111';
+
+    // Batch draw all paths? Or one by one?
+    // We strictly need to "fill" each polygon.
+    // Drawing all at once implies a union if self-intersecting?
+    // No, standard canvas fill logic is non-zero or even-odd.
+    // We want to accumulate density. So we must draw each path individually on top of each other.
+
+    // Optimizing loop
+    const total = paths.length;
+    for (let i = 0; i < total; i++) {
+        const path = paths[i];
+
+        ctx.beginPath();
+        const start = path.points[0];
+        // Map to canvas coords (pad by 1px)
+        ctx.moveTo((start.x - bounds.minX) * scale + 1, (start.y - bounds.minY) * scale + 1);
+
+        for (let j = 1; j < path.points.length; j++) {
+            const p = path.points[j];
+            ctx.lineTo((p.x - bounds.minX) * scale + 1, (p.y - bounds.minY) * scale + 1);
+        }
+        ctx.closePath();
+        ctx.fill(); // Default is non-zero, but we are just filling simple polygons
+
+        // Report progress for drawing phase (first 50%)
+        if (onProgress && i % 50 === 0) {
+            onProgress(0.5 * (i / total));
+        }
+    }
+
+    // 3. Sample depth
+    const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
+    const data = imageData.data;
+    const directions: boolean[] = [];
+
+    for (let i = 0; i < total; i++) {
+        const path = paths[i];
+
+        // Find a representative interior point
+        const point = findInteriorPoint(path.points);
+
+        // Map to canvas coords
+        const cx = Math.floor((point.x - bounds.minX) * scale + 1);
+        const cy = Math.floor((point.y - bounds.minY) * scale + 1);
+
+        // Clamp to bounds
+        const x = Math.max(0, Math.min(canvasWidth - 1, cx));
+        const y = Math.max(0, Math.min(canvasHeight - 1, cy));
+
+        const index = (y * canvasWidth + x) * 4;
+        const red = data[index]; // 0-255
+
+        // Determine depth (each layer adds 17)
+        // Round to nearest multiple of 17 to handle potential anti-aliasing noise
+        // though finding interior point usually avoids edges.
+        const depth = Math.round(red / 17);
+
+        // Odd depth (1, 3, 5) -> Solid -> CCW
+        // Even depth (2, 4, 6) -> Hole -> CW
+        // Depth 0 -> Error? Assume Solid.
+        const isSolid = (depth % 2 !== 0);
+
+        directions.push(isSolid);
+
+        // Report progress for sampling phase (last 50%)
+        if (onProgress && i % 50 === 0) {
+            onProgress(0.5 + 0.5 * (i / total));
+        }
+    }
+
+    return directions;
 }

@@ -40,7 +40,6 @@ let currentResult: OptimizeResult | null = null;
 
 // Worker Management
 let worker: Worker | null = null;
-let isOptimizing = false;
 
 // Initialize
 function init() {
@@ -154,17 +153,11 @@ function updateDependencies() {
         const input = radio as HTMLInputElement;
         if (input.value !== 'none') {
             input.disabled = !merge;
-            // Add tooltip or visual indicator? For now just disable.
-            if (!merge && input.checked) {
-                // If currently checked but disabled, should we switch to none?
-                // User experience is better if we auto-check merge, but let's stick to strict guards first.
-                // Or just let it be disabled.
-            }
         }
     });
 
     // 2. Gap Tolerance only visible if Fill != None
-    if (fillStrategy === 'none' || (!merge && fillStrategy !== 'none')) {
+    if (fillStrategy === 'none' || !merge) {
         gapToleranceContainer.style.opacity = '0.5';
         gapToleranceContainer.style.pointerEvents = 'none';
     } else {
@@ -262,7 +255,6 @@ function runOptimization() {
 
         // Reset worker for new task (cancellation)
         createWorker();
-        isOptimizing = true;
 
         // Send parsed document to worker
         if (worker) {
@@ -282,7 +274,6 @@ function runOptimization() {
 // Handle successful optimization from worker
 function handleOptimizationSuccess(result: OptimizeResult) {
     currentResult = result;
-    isOptimizing = false;
 
     // Render previews
     renderPreview(originalPreview, currentResult.original, {
@@ -316,7 +307,6 @@ function handleOptimizationSuccess(result: OptimizeResult) {
 // Handle error from worker
 function handleOptimizationError(error: string) {
     console.error('Optimization worker error:', error);
-    isOptimizing = false;
     // Don't alert if terminated? Worker termination doesn't emit error usually.
     // Use generic error handling.
     if (error) {

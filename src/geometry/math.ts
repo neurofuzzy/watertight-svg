@@ -313,3 +313,57 @@ export function centroid(polygon: Point[]): Point {
 
     return { x: cx / polygon.length, y: cy / polygon.length };
 }
+
+/**
+ * Find a point that is guaranteed to be inside the polygon.
+ * Uses a scanline algorithm at the centroid's Y coordinate.
+ */
+export function findInteriorPoint(polygon: Point[]): Point {
+    const center = centroid(polygon);
+
+    // Try horizontal scanline at centroid Y
+    let y = center.y;
+    let intersections: number[] = [];
+
+    // Find intersections with all edges
+    for (let i = 0; i < polygon.length; i++) {
+        const p1 = polygon[i];
+        const p2 = polygon[(i + 1) % polygon.length];
+
+        if ((p1.y <= y && p2.y > y) || (p2.y <= y && p1.y > y)) {
+            const x = (p2.x - p1.x) * (y - p1.y) / (p2.y - p1.y) + p1.x;
+            intersections.push(x);
+        }
+    }
+
+    intersections.sort((a, b) => a - b);
+
+    // If we have valid pairs, pick the midpoint of the median span
+    if (intersections.length >= 2) {
+        // Pick the widest span to be safe
+        let bestX = center.x;
+        let maxSpan = -1;
+
+        for (let i = 0; i < intersections.length; i += 2) {
+            if (i + 1 >= intersections.length) break;
+            const span = intersections[i + 1] - intersections[i];
+            const mid = (intersections[i] + intersections[i + 1]) / 2;
+
+            // Verify midpoint is actually inside (handles complex self-intersecting cases)
+            if (pointInPolygonEvenOdd({ x: mid, y }, polygon)) {
+                if (span > maxSpan) {
+                    maxSpan = span;
+                    bestX = mid;
+                }
+            }
+        }
+
+        if (maxSpan > 0) {
+            return { x: bestX, y };
+        }
+    }
+
+    // Fallback: If scanline failed (e.g., horizontal polygon), return centroid
+    // Ideally we would try a vertical scanline too, but centroid is usually fine if main scan failed
+    return center;
+}

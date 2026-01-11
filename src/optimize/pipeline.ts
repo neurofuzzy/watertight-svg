@@ -25,9 +25,6 @@ export interface OptimizeResult {
 
 /**
  * Run the full optimization pipeline on an SVG string.
- */
-/**
- * Run the full optimization pipeline on an SVG string.
  * NOTE: This parses the SVG on the main thread (using DOM).
  */
 export function optimize(svgString: string, options: OptimizeOptions): OptimizeResult {
@@ -83,23 +80,44 @@ export function optimizeDocument(
         paths = mergePaths(paths); // Uses default 0.001 tolerance
     }
 
-    // Step 3: Fill Strategy (Mutually Exclusive ideally, but enforced by order here)
+    // Step 3: Fill Strategy & Step 4: Fix Winding
+    // We handle these together to optimize performance (only fixing winding on regions)
     if (options.findRegions) {
-        // Find enclosed regions (Flash-style fills)
-        const regions = findRegions(paths, {
+        // Determine progress range for regions phase
+        // If winding is enabled, regions gets 70% of the bar, winding gets 30%
+        const regionsRange = options.fixWinding ? 0.7 : 1.0;
+
+        // Find enclosed regions
+        let regions = findRegions(paths, {
             tolerance: options.gapTolerance,
-            onProgress: onProgress
+            onProgress: onProgress ? (p) => onProgress(p * regionsRange) : undefined
         });
+
+        // Step 4: Fix winding for regions
+        // OPTIMIZATION: Only run winding correction on the newly found regions
+        // This avoids O(N^2) checks against the thousands of original stroke segments
+        if (options.fixWinding) {
+            const rangeStart = 0.7;
+            const rangeWidth = 0.3;
+
+            regions = fixWinding(regions, options.fillRule, onProgress ? (p) => {
+                onProgress(rangeStart + (p * rangeWidth));
+            } : undefined);
+        }
+
         // Add detected regions to the path list
-        paths = [...paths, ...regions];
+        // REPLACE original paths with regions to avoid duplicates
+        paths = [...regions];
+
     } else if (options.closePaths) {
         // Close nearly-closed paths (Simple)
         paths = autoClosePaths(paths, options.gapTolerance);
-    }
 
-    // Step 4: Fix winding for nested shapes
-    if (options.fixWinding) {
-        paths = fixWinding(paths, options.fillRule);
+        // Step 4: Fix winding for closed paths
+        // In the "Close Paths" strategy, we operate on the original paths
+        if (options.fixWinding) {
+            paths = fixWinding(paths, options.fillRule, onProgress);
+        }
     }
 
     // Step 5: Sort paths to minimize travel

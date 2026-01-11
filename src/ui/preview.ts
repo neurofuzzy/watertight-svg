@@ -80,13 +80,20 @@ export function renderPreview(
     }
 
     // Render fills for closed paths
-    for (const path of doc.paths) {
-        if (!path.closed || path.points.length < 3) continue;
+    // fast-path: combining all closed paths into one d string to support evenodd filling (holes)
+    const closedPaths = doc.paths.filter(p => p.closed && p.points.length >= 3);
+    if (closedPaths.length > 0) {
+        const d = closedPaths.map(path => {
+            if (path.points.length < 1) return '';
+            const start = path.points[0];
+            const lines = path.points.slice(1).map(p => `L${p.x},${p.y}`).join(' ');
+            return `M${start.x},${start.y} ${lines} Z`;
+        }).join(' ');
 
-        const fillPath = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-        const points = path.points.map(p => `${p.x},${p.y}`).join(' ');
-        fillPath.setAttribute('points', points);
+        const fillPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        fillPath.setAttribute('d', d);
         fillPath.setAttribute('fill', opts.fillColor!);
+        fillPath.setAttribute('fill-rule', 'evenodd'); // Critical for holes
         fillPath.setAttribute('stroke', 'none');
         fillGroup.appendChild(fillPath);
     }
