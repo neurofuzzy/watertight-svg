@@ -4,7 +4,7 @@
 
 import type { Path, OptimizeOptions, PathStats, SVGDocument } from '../geometry/types';
 import { parseSVG } from '../geometry/parser';
-import { pathLength, scalePath } from '../geometry/math';
+import { pathLength, scalePath, pruneDuplicatePoints } from '../geometry/math';
 import { mergePaths } from './merge';
 import { removeOverdraw } from './overdraw';
 import { sortPathsWithTwoOpt, calculateTravelDistance } from './sort';
@@ -88,6 +88,8 @@ export function optimizeDocument(
     // Step 1: Remove overdraw (uses tight geometric tolerance)
     if (scaledOptions.removeOverdraw) {
         paths = removeOverdraw(paths); // Uses default tolerance
+        // Cleanup: Remove duplicate points that might have been created
+        paths = pruneDuplicatePoints(paths);
     }
 
     // Step 2: Merge connected segments (uses tight geometric tolerance)
@@ -134,7 +136,13 @@ export function optimizeDocument(
 
         // Add detected regions to the path list
         // REPLACE original paths with regions to avoid duplicates
-        paths = [...regions];
+        if (regions.length > 0) {
+            paths = [...regions];
+        } else {
+            // Fallback: If no regions found (e.g. open paths), return the bridged paths
+            // so the user effectively sees the "Close Paths" result instead of nothing.
+            paths = bridgedPaths;
+        }
 
     } else if (scaledOptions.closePaths) {
         // Close nearly-closed paths (Simple)

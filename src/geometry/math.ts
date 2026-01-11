@@ -398,3 +398,28 @@ export function findInteriorPoint(polygon: Point[]): Point {
     // Ideally we would try a vertical scanline too, but centroid is usually fine if main scan failed
     return center;
 }
+
+/**
+ * Remove sequential duplicate points from paths.
+ */
+export function pruneDuplicatePoints(paths: Path[], tolerance: number = 1e-5): Path[] {
+    return paths.map(path => {
+        if (path.points.length < 2) return path;
+
+        const newPoints = [path.points[0]];
+        for (let i = 1; i < path.points.length; i++) {
+            if (!pointsEqual(path.points[i], newPoints[newPoints.length - 1], tolerance)) {
+                newPoints.push(path.points[i]);
+            }
+        }
+
+        // Handle closed paths having same start/end
+        if (path.closed && newPoints.length > 2) {
+            if (pointsEqual(newPoints[0], newPoints[newPoints.length - 1], tolerance)) {
+                newPoints.pop();
+            }
+        }
+
+        return { ...path, points: newPoints };
+    });
+}
