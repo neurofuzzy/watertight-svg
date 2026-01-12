@@ -1,7 +1,21 @@
 {
   "name": "watertight-svg",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "A high-performance geometric optimizer for SVG paths, designed for plotters, laser cutters, and CNC machines.",
+  "keywords": [
+    "svg",
+    "optimizer",
+    "plotter",
+    "axidraw",
+    "cnc",
+    "geometry",
+    "path-finding",
+    "TSP",
+    "visualization"
+  ],
+  "author": "Geoff",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
