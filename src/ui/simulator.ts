@@ -30,6 +30,9 @@ export class Simulator {
     private showBlots: boolean = false;
     private showTravel: boolean = true;
 
+    // Store bounds for resize recalculation
+    private currentBounds: { width: number, height: number } = { width: 1, height: 1 };
+
     // Background Data (removed - keeping buffer for compatibility if needed, but not using it)
     // private penWeight: number = 0.3;
     // private pixelScale: number = 1;
@@ -300,6 +303,7 @@ export class Simulator {
         gl.bindBuffer(gl.ARRAY_BUFFER, this.blotBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, blotData, gl.STATIC_DRAW);
 
+        this.currentBounds = bounds;
         this.fitView(bounds);
         this.progress = 0;
         this.draw();
@@ -352,8 +356,8 @@ export class Simulator {
             this.canvas.width = width;
             this.canvas.height = height;
             gl.viewport(0, 0, width, height);
-            gl.useProgram(this.program);
-            gl.uniform2f(gl.getUniformLocation(this.program, 'u_resolution')!, width, height);
+            // Recalculate scale/offset with stored bounds for proper fit
+            this.fitView(this.currentBounds);
             this.draw();
         }
     }
