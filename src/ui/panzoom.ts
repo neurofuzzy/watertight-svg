@@ -170,7 +170,7 @@ export class PanZoomController {
         this.update();
     }
 
-    private handleUp(e: MouseEvent) {
+    private handleUp(_e: MouseEvent) {
         if (this.isPanning) {
             this.isPanning = false;
             this.svgs.forEach(s => s.style.cursor = 'grab');

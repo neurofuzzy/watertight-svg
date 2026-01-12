@@ -31,8 +31,8 @@ export class Simulator {
     private showTravel: boolean = true;
 
     // Background Data (removed - keeping buffer for compatibility if needed, but not using it)
-    private penWeight: number = 0.3;
-    private pixelScale: number = 1;
+    // private penWeight: number = 0.3;
+    // private pixelScale: number = 1;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -152,7 +152,7 @@ export class Simulator {
         return shader;
     }
 
-    public setData(paths: Path[], bounds: { width: number, height: number }, penWeight: number = 0.3, showOutline: boolean = false) {
+    public setData(paths: Path[], bounds: { width: number, height: number }, _penWeight: number = 0.3, showOutline: boolean = false) {
         // penWeight is unused in simulator (WebGL line width limit), but kept for API compatibility if needed
         // or we can just ignore it.
         // this.penWeight = penWeight; // Removed usage
@@ -330,7 +330,7 @@ export class Simulator {
         const scaleX = (this.canvas.width - padding * 2) / bounds.width;
         const scaleY = (this.canvas.height - padding * 2) / bounds.height;
         const scale = Math.min(scaleX, scaleY);
-        this.pixelScale = scale; // Store for line width calc
+        // this.pixelScale = scale; // Store for line width calc
 
         const offsetX = (this.canvas.width - bounds.width * scale) / 2;
         const offsetY = (this.canvas.height - bounds.height * scale) / 2;

@@ -63,15 +63,7 @@ const unitLabels = document.querySelectorAll('.unit-label') as NodeListOf<HTMLEl
 let currentUnit = 'in'; // Default to Imperial
 
 // Defaults
-const DEFAULT_SETTINGS = {
-    unit: 'in',
-    scaleToFit: true,
-    rotateOutput: false,
-    customWidth: 8.5,
-    customHeight: 11,
-    margin: 0.5,
-    penWeight: 0.01
-};
+
 
 // Application state
 let currentSVG: string | null = null;
@@ -453,7 +445,7 @@ function setupButtons() {
                 ...p,
                 meta: {
                     ...p.meta,
-                    strokeWidth: penWeightMM.toString()
+                    strokeWidth: penWeightMM
                 }
             }));
 

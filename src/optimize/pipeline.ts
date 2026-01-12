@@ -12,7 +12,7 @@ import { autoClosePaths, bridgeGaps } from './fill';
 import { fixWinding } from './winding';
 import { findRegions } from './regions';
 import { splitPathsAtIntersections } from '../geometry/intersection';
-import { fitToPaper } from './scale';
+// import { fitToPaper } from './scale';
 
 export interface OptimizeResult {
     /** Original parsed document */

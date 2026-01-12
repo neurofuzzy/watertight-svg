@@ -1,4 +1,4 @@
-import { Path, Point } from '../geometry/types';
+import { Path } from '../geometry/types';
 
 /**
  * Scales and centers paths to fit within a target paper size.

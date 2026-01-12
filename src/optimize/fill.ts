@@ -193,7 +193,7 @@ export function autoClosePaths(paths: Path[], gapTolerance: number = 2): Path[] 
  * Bridge gaps by connecting open endpoints to the nearest segment within tolerance.
  * This handles T-junctions where a line ends near another line but doesn't touch.
  */
-import { pathsToSegments, type Segment } from '../geometry/intersection';
+import { pathsToSegments } from '../geometry/intersection';
 import { pointToSegmentDistance, projectPointToSegment } from '../geometry/math';
 
 export function bridgeGaps(paths: Path[], tolerance: number): Path[] {
