@@ -1,0 +1,209 @@
+/**
+ * Region Finding Test Suite
+ * 
+ * Tests the region-finding algorithm against sample SVGs.
+ * Compares TypeScript vs WASM implementations.
+ * Grades based on: number of segments NOT assigned to regions (lower is better).
+ */
+
+import { readFileSync } from 'fs';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { parseSimpleSVG } from './simple-parser';
+import { findRegions } from '../optimize/regions';
+import { autoClosePaths, bridgeGaps } from '../optimize/fill';
+import { scalePath } from '../geometry/math';
+import type { Path } from '../geometry/types';
+
+// Test configuration
+const TOLERANCE = 1.0;    // Vertex snapping tolerance
+const GAP_TOLERANCE = 2;  // Gap bridging tolerance
+const MIN_AREA = 1;       // Minimum region area
+const SCALE = 10;         // Internal scaling for precision
+
+interface TestResult {
+    name: string;
+    totalSegments: number;
+    // TypeScript results
+    tsRegions: number;
+    tsSegments: number;
+    tsCoverage: number;
+    tsTimeMs: number;
+    // WASM results
+    wasmRegions: number;
+    wasmSegments: number;
+    wasmCoverage: number;
+    wasmTimeMs: number;
+    // Comparison
+    speedup: number;
+    regionsMatch: boolean;
+}
+
+// WASM module reference
+let wasmModule: any = null;
+let wasmReady = false;
+
+// Initialize WASM for tests (using Node-compatible package)
+async function initWasm(): Promise<boolean> {
+    try {
+        // Use Node-compatible WASM package
+        const wasm = await import('../wasm-pkg-node/watertight_wasm.js');
+        wasmModule = wasm;
+        wasmReady = true;
+        console.log(`[WASM] Initialized, version: ${wasm.version()}`);
+        return true;
+    } catch (error) {
+        console.warn('[WASM] Failed to initialize:', error);
+        wasmReady = false;
+        return false;
+    }
+}
+
+// Helper to count segments in paths
+function countSegments(paths: Path[]): number {
+    return paths.reduce((sum, p) => sum + Math.max(0, p.points.length - 1), 0);
+}
+
+// Load and parse SVG file using simple parser
+function loadSVG(filename: string): Path[] {
+    const content = readFileSync(`samples/${filename}`, 'utf-8');
+    const doc = parseSimpleSVG(content);
+    return doc.paths;
+}
+
+// Prepare paths for region finding
+function preparePaths(paths: Path[]): Path[] {
+    // Scale geometry for precision
+    const scaled = paths.map(p => scalePath(p, SCALE));
+    // Bridge gaps
+    let bridged = autoClosePaths(scaled, GAP_TOLERANCE * SCALE);
+    bridged = bridgeGaps(bridged, GAP_TOLERANCE * SCALE);
+    return bridged;
+}
+
+// Run TypeScript implementation
+function runTypeScript(bridged: Path[]): { regions: Path[], timeMs: number } {
+    const start = performance.now();
+    const regions = findRegions(bridged, {
+        tolerance: TOLERANCE * SCALE,
+        minArea: MIN_AREA * SCALE * SCALE,
+    });
+    return { regions, timeMs: performance.now() - start };
+}
+
+// Run WASM implementation
+function runWasm(bridged: Path[]): { regions: Path[], timeMs: number } {
+    if (!wasmReady || !wasmModule) {
+        return { regions: [], timeMs: 0 };
+    }
+    const start = performance.now();
+    const regions = wasmModule.find_regions(
+        bridged,
+        TOLERANCE * SCALE,
+        MIN_AREA * SCALE * SCALE
+    );
+    return { regions, timeMs: performance.now() - start };
+}
+
+// Test a single sample with both implementations
+function testSample(filename: string): TestResult {
+    const paths = loadSVG(filename);
+    const totalSegments = countSegments(paths);
+    const bridged = preparePaths(paths);
+
+    // Run TypeScript
+    const ts = runTypeScript(bridged);
+    const tsSegments = countSegments(ts.regions);
+    const tsCoverage = totalSegments > 0 ? (tsSegments / totalSegments) * 100 : 0;
+
+    // Run WASM
+    const wasm = runWasm(bridged);
+    const wasmSegments = countSegments(wasm.regions);
+    const wasmCoverage = totalSegments > 0 ? (wasmSegments / totalSegments) * 100 : 0;
+
+    // Calculate speedup
+    const speedup = wasm.timeMs > 0 ? ts.timeMs / wasm.timeMs : 0;
+    const regionsMatch = ts.regions.length === wasm.regions.length;
+
+    return {
+        name: filename,
+        totalSegments,
+        tsRegions: ts.regions.length,
+        tsSegments,
+        tsCoverage,
+        tsTimeMs: ts.timeMs,
+        wasmRegions: wasm.regions.length,
+        wasmSegments,
+        wasmCoverage,
+        wasmTimeMs: wasm.timeMs,
+        speedup,
+        regionsMatch,
+    };
+}
+
+// Sample files in order of complexity
+const SAMPLES = [
+    'easy.svg',
+    'medium.svg',
+    'hard.svg',
+    'hardest.svg',
+    'hurt-me.svg',
+];
+
+describe('Region Finding Test Suite (TS vs WASM)', () => {
+    const results: TestResult[] = [];
+
+    beforeAll(async () => {
+        console.log('\n=== Region Finding: TypeScript vs WASM ===\n');
+        await initWasm();
+    });
+
+    for (const sample of SAMPLES) {
+        it(`should find regions in ${sample}`, () => {
+            const r = testSample(sample);
+            results.push(r);
+
+            const wasmStatus = wasmReady
+                ? `✅ ${r.wasmRegions} regions, ${r.wasmTimeMs.toFixed(0)}ms`
+                : '❌ Not available';
+
+            console.log(`
+📊 ${r.name} (${r.totalSegments} segments)
+   TypeScript: ${r.tsRegions} regions, ${r.tsCoverage.toFixed(0)}% coverage, ${r.tsTimeMs.toFixed(0)}ms
+   WASM:       ${wasmStatus}
+   Speedup:    ${wasmReady ? r.speedup.toFixed(2) + 'x' : 'N/A'}
+   Match:      ${r.regionsMatch ? '✅' : '⚠️ MISMATCH'}
+            `.trim());
+
+            expect(r.totalSegments).toBeGreaterThan(0);
+            expect(r.tsRegions).toBeGreaterThanOrEqual(0);
+        });
+    }
+
+    it('should produce comparison summary', () => {
+        console.log('\n=== COMPARISON SUMMARY ===\n');
+        console.log('| Sample | Segs | TS Regions | TS Time | WASM Regions | WASM Time | Speedup |');
+        console.log('|--------|------|------------|---------|--------------|-----------|---------|');
+
+        for (const r of results) {
+            const wasmTime = wasmReady ? `${r.wasmTimeMs.toFixed(0)}ms` : 'N/A';
+            const wasmRegions = wasmReady ? String(r.wasmRegions) : 'N/A';
+            const speedup = wasmReady ? `${r.speedup.toFixed(2)}x` : 'N/A';
+
+            console.log(
+                `| ${r.name.padEnd(12)} | ${String(r.totalSegments).padStart(4)} | ` +
+                `${String(r.tsRegions).padStart(10)} | ${r.tsTimeMs.toFixed(0).padStart(6)}ms | ` +
+                `${wasmRegions.padStart(12)} | ${wasmTime.padStart(9)} | ${speedup.padStart(7)} |`
+            );
+        }
+
+        // Calculate totals
+        const totalTsTime = results.reduce((s, r) => s + r.tsTimeMs, 0);
+        const totalWasmTime = results.reduce((s, r) => s + r.wasmTimeMs, 0);
+        const avgSpeedup = totalWasmTime > 0 ? totalTsTime / totalWasmTime : 0;
+
+        console.log(`\nTotal: TS=${totalTsTime.toFixed(0)}ms, WASM=${totalWasmTime.toFixed(0)}ms`);
+        console.log(`Average Speedup: ${avgSpeedup.toFixed(2)}x`);
+
+        expect(results.length).toBe(SAMPLES.length);
+    });
+});

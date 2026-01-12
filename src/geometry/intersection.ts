@@ -209,3 +209,65 @@ export function isEndpoint(segment: Segment, point: Point, tolerance: number = 0
     const d2 = Math.hypot(point.x - segment.p2.x, point.y - segment.p2.y);
     return d1 < tolerance || d2 < tolerance;
 }
+
+/**
+ * Split all paths at intersection points to eliminate crossing segments.
+ * This should be run BEFORE overdraw removal and path merging.
+ * 
+ * @returns Array of Path objects with no crossing segments (all intersections become vertices)
+ */
+export function splitPathsAtIntersections(
+    paths: { points: Point[], closed?: boolean, meta?: unknown }[],
+    tolerance: number = 1.0,
+    onProgress?: (percent: number) => void
+): { points: Point[], closed: boolean, meta?: unknown }[] {
+    if (paths.length === 0) return [];
+
+    // Step 1: Convert paths to segments
+    const segments = pathsToSegments(paths);
+    if (segments.length === 0) return paths as { points: Point[], closed: boolean, meta?: unknown }[];
+
+    // Step 2: Find all intersections
+    const intersections = findAllIntersections(segments, tolerance, onProgress ?
+        (p) => onProgress(p * 0.5) : undefined);
+
+    if (intersections.length === 0) {
+        // No intersections - return original paths
+        return paths as { points: Point[], closed: boolean, meta?: unknown }[];
+    }
+
+    // Step 3: Group intersections by segment ID
+    const segmentIntersections = new Map<number, Point[]>();
+    for (const intersection of intersections) {
+        for (const segId of intersection.segments) {
+            if (!segmentIntersections.has(segId)) {
+                segmentIntersections.set(segId, []);
+            }
+            segmentIntersections.get(segId)!.push(intersection.point);
+        }
+    }
+
+    // Step 4: Split each segment at its intersection points
+    const splitSegments: Segment[] = [];
+    for (const segment of segments) {
+        const points = segmentIntersections.get(segment.id) || [];
+        const splits = splitSegmentAtIntersections(segment, points);
+        splitSegments.push(...splits);
+    }
+
+    // Step 5: Convert split segments back to paths (each segment becomes a 2-point path)
+    const result: { points: Point[], closed: boolean, meta?: unknown }[] = [];
+    for (const seg of splitSegments) {
+        result.push({
+            points: [seg.p1, seg.p2],
+            closed: false,
+        });
+    }
+
+    if (onProgress) onProgress(1.0);
+
+    console.log(`[splitPathsAtIntersections] ${paths.length} paths -> ${segments.length} segments -> ${intersections.length} intersections -> ${splitSegments.length} split segments`);
+
+    return result;
+}
+

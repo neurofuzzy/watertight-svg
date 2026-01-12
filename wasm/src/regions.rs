@@ -8,11 +8,33 @@ use crate::types::{Path, Point, PathMeta, Segment};
 use crate::intersection::{paths_to_segments, find_all_intersections, split_segment_at_intersections};
 use crate::dcel::{DCEL, find_or_create_vertex, edge_exists};
 
+// Import timing from lib.rs
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+    
+    #[wasm_bindgen(js_namespace = performance)]
+    fn now() -> f64;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn log(_s: &str) {}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn now() -> f64 { 0.0 }
+
 /// Find all enclosed regions formed by the given paths.
 pub fn find_regions_impl(paths: &[Path], tolerance: f64, min_area: f64) -> Vec<Path> {
     if paths.is_empty() {
         return Vec::new();
     }
+    
+    let t0 = now();
     
     // Step 1: Convert paths to segments
     let segments = paths_to_segments(paths);
@@ -20,20 +42,39 @@ pub fn find_regions_impl(paths: &[Path], tolerance: f64, min_area: f64) -> Vec<P
         return Vec::new();
     }
     
+    let t1 = now();
+    log(&format!("  [Step 1] paths_to_segments: {:.1}ms ({} segments)", t1 - t0, segments.len()));
+    
     // Step 2: Find all intersections
     let intersections = find_all_intersections(&segments, tolerance);
+    
+    let t2 = now();
+    log(&format!("  [Step 2] find_intersections: {:.1}ms ({} intersections)", t2 - t1, intersections.len()));
     
     // Step 3: Split segments at intersection points
     let split_segments = split_all_segments(&segments, &intersections);
     
+    let t3 = now();
+    log(&format!("  [Step 3] split_segments: {:.1}ms ({} split)", t3 - t2, split_segments.len()));
+    
     // Step 4: Build DCEL from split segments
     let mut dcel = build_dcel(&split_segments, tolerance);
+    
+    let t4 = now();
+    log(&format!("  [Step 4] build_dcel: {:.1}ms ({} vertices, {} edges)", 
+        t4 - t3, dcel.vertices.len(), dcel.half_edges.len()));
     
     // Step 5: Compute next/prev pointers for face traversal
     dcel.compute_next_prev_pointers();
     
+    let t5 = now();
+    log(&format!("  [Step 5] compute_next_prev: {:.1}ms", t5 - t4));
+    
     // Step 6: Extract faces
     dcel.extract_faces();
+    
+    let t6 = now();
+    log(&format!("  [Step 6] extract_faces: {:.1}ms ({} faces)", t6 - t5, dcel.faces.len()));
     
     // Step 7: Convert faces to paths
     let mut regions = Vec::new();
@@ -63,6 +104,9 @@ pub fn find_regions_impl(paths: &[Path], tolerance: f64, min_area: f64) -> Vec<P
             }),
         });
     }
+    
+    let t7 = now();
+    log(&format!("  [Step 7] build_regions: {:.1}ms ({} regions)", t7 - t6, regions.len()));
     
     regions
 }

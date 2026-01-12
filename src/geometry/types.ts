@@ -85,6 +85,8 @@ export interface OptimizeOptions {
     mergePaths: boolean;
     /** Remove overlapping/duplicate segments */
     removeOverdraw: boolean;
+    /** Split segments at all intersection points (recommended for complex SVGs) */
+    splitIntersections: boolean;
     /** Sort paths to minimize travel distance */
     sortPaths: boolean;
     /** Find enclosed regions (Flash-style fill) */
@@ -97,6 +99,8 @@ export interface OptimizeOptions {
     fixWinding: boolean;
     /** Fill rule to use for winding correction */
     fillRule: 'evenodd' | 'nonzero';
+    /** Use WASM implementation for region finding (if available) */
+    useWasm: boolean;
 }
 
 /** Default optimization options */
@@ -104,10 +108,12 @@ export const DEFAULT_OPTIONS: OptimizeOptions = {
     breakApart: false,
     mergePaths: true,
     removeOverdraw: true,
+    splitIntersections: true,
     sortPaths: true,
     findRegions: false,
     closePaths: true,
     gapTolerance: 2,
     fixWinding: true,
     fillRule: 'evenodd',
+    useWasm: true,
 };

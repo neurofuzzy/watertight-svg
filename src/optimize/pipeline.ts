@@ -10,7 +10,8 @@ import { removeOverdraw } from './overdraw';
 import { sortPathsWithTwoOpt, calculateTravelDistance } from './sort';
 import { autoClosePaths, bridgeGaps } from './fill';
 import { fixWinding } from './winding';
-import { findRegions } from './regions';
+import { findRegionsBridge } from './wasm-bridge';
+import { splitPathsAtIntersections } from '../geometry/intersection';
 
 export interface OptimizeResult {
     /** Original parsed document */
@@ -85,6 +86,13 @@ export function optimizeDocument(
         paths = brokenPaths;
     }
 
+    // Step 0.5: Split segments at all intersection points (NEW)
+    // This ensures no crossing segments - all intersections become proper vertices
+    if (scaledOptions.splitIntersections) {
+        const SPLIT_TOLERANCE = 1.0 * SCALE; // 1 pixel tolerance for intersection snapping
+        paths = splitPathsAtIntersections(paths, SPLIT_TOLERANCE) as Path[];
+    }
+
     // Step 1: Remove overdraw (uses tight geometric tolerance)
     if (scaledOptions.removeOverdraw) {
         paths = removeOverdraw(paths); // Uses default tolerance
@@ -117,10 +125,10 @@ export function optimizeDocument(
         // 0.1 unscaled pixels -> 0.1 * SCALE in scaled space
         const STRICT_TOLERANCE = 0.1 * SCALE;
 
-        let regions = findRegions(bridgedPaths, {
+        let regions = findRegionsBridge(bridgedPaths, {
             tolerance: STRICT_TOLERANCE,
-            onProgress: onProgress ? (p) => onProgress(p * regionsRange) : undefined
-        });
+            onProgress: onProgress ? (p: number) => onProgress(p * regionsRange) : undefined
+        }, scaledOptions.useWasm);
 
         // Step 4: Fix winding for regions
         // OPTIMIZATION: Only run winding correction on the newly found regions

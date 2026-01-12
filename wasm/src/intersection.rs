@@ -1,10 +1,11 @@
 //! Segment intersection detection
 //!
-//! Finds all intersection points between line segments using
-//! a brute-force O(n²) approach.
+//! Uses Quadtree spatial indexing for O(n log n) intersection detection
+//! instead of brute-force O(n²).
 
 use std::collections::HashMap;
 use crate::types::{Path, Point, Segment, Intersection};
+use crate::quadtree::Quadtree;
 
 const EPSILON: f64 = 1e-10;
 
@@ -27,13 +28,31 @@ pub fn paths_to_segments(paths: &[Path]) -> Vec<Segment> {
     segments
 }
 
-/// Find all intersection points between a set of segments
+/// Find all intersection points using Quadtree spatial indexing
 pub fn find_all_intersections(segments: &[Segment], tolerance: f64) -> Vec<Intersection> {
+    if segments.is_empty() {
+        return Vec::new();
+    }
+    
     let mut intersections: HashMap<String, Intersection> = HashMap::new();
     
-    for i in 0..segments.len() {
-        for j in (i + 1)..segments.len() {
-            if let Some(point) = segment_intersection(&segments[i], &segments[j]) {
+    // Build quadtree for spatial indexing
+    let quadtree = Quadtree::build(segments);
+    
+    // For each segment, query nearby segments and test for intersection
+    for i in 0..quadtree.len() {
+        let seg_i = quadtree.get_segment(i);
+        let candidates = quadtree.query_segment(i);
+        
+        for j in candidates {
+            // Only process each pair once (i < j)
+            if i >= j {
+                continue;
+            }
+            
+            let seg_j = quadtree.get_segment(j);
+            
+            if let Some(point) = segment_intersection(seg_i, seg_j) {
                 // Snap to grid for deduplication
                 let key = format!(
                     "{},{}",
@@ -44,16 +63,16 @@ pub fn find_all_intersections(segments: &[Segment], tolerance: f64) -> Vec<Inter
                 intersections
                     .entry(key)
                     .and_modify(|existing| {
-                        if !existing.segments.contains(&segments[i].id) {
-                            existing.segments.push(segments[i].id);
+                        if !existing.segments.contains(&seg_i.id) {
+                            existing.segments.push(seg_i.id);
                         }
-                        if !existing.segments.contains(&segments[j].id) {
-                            existing.segments.push(segments[j].id);
+                        if !existing.segments.contains(&seg_j.id) {
+                            existing.segments.push(seg_j.id);
                         }
                     })
                     .or_insert(Intersection {
                         point,
-                        segments: vec![segments[i].id, segments[j].id],
+                        segments: vec![seg_i.id, seg_j.id],
                     });
             }
         }
@@ -62,8 +81,26 @@ pub fn find_all_intersections(segments: &[Segment], tolerance: f64) -> Vec<Inter
     intersections.into_values().collect()
 }
 
+
 /// Find the intersection point of two line segments
 fn segment_intersection(s1: &Segment, s2: &Segment) -> Option<Point> {
+    // AABB early-out: check if bounding boxes overlap
+    let s1_min_x = s1.p1.x.min(s1.p2.x);
+    let s1_max_x = s1.p1.x.max(s1.p2.x);
+    let s1_min_y = s1.p1.y.min(s1.p2.y);
+    let s1_max_y = s1.p1.y.max(s1.p2.y);
+    
+    let s2_min_x = s2.p1.x.min(s2.p2.x);
+    let s2_max_x = s2.p1.x.max(s2.p2.x);
+    let s2_min_y = s2.p1.y.min(s2.p2.y);
+    let s2_max_y = s2.p1.y.max(s2.p2.y);
+    
+    // If AABBs don't overlap, segments can't intersect
+    if s1_max_x < s2_min_x || s2_max_x < s1_min_x ||
+       s1_max_y < s2_min_y || s2_max_y < s1_min_y {
+        return None;
+    }
+    
     let x1 = s1.p1.x;
     let y1 = s1.p1.y;
     let x2 = s1.p2.x;
