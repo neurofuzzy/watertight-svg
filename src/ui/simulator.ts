@@ -36,7 +36,7 @@ export class Simulator {
 
         // Setup GL state
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0.0, 0.0, 0.0, 1.0); // --bg-canvas (#000000)
+        gl.clearColor(0.063, 0.063, 0.102, 1.0); // --bg-canvas (#10101a)
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     }
