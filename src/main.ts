@@ -705,7 +705,17 @@ function initSimulator() {
 
     // Load data
     let paths = currentResult.optimized.paths;
-    let width = 800, height = 600;
+    let width = currentResult.optimized.width;
+    let height = currentResult.optimized.height;
+
+    // Fallback if width/height missing
+    if (!width || !height) {
+        const viewPort = currentResult.optimized.viewBox || { width: 800, height: 600 };
+        if (typeof viewPort === 'string') {
+            const parts = viewPort.split(' ').map(parseFloat);
+            if (parts.length === 4) { width = parts[2]; height = parts[3]; }
+        } else { width = viewPort.width; height = viewPort.height; }
+    }
 
     // Apply Rotation if enabled
     if (rotateOutputInput.checked) {
@@ -724,13 +734,6 @@ function initSimulator() {
         paths = scaledPaths;
         width = pWidth;
         height = pHeight;
-    } else {
-        // Use original dimensions
-        const viewPort = currentResult.optimized.viewBox || { width: 800, height: 600 };
-        if (typeof viewPort === 'string') {
-            const parts = viewPort.split(' ').map(parseFloat);
-            if (parts.length === 4) { width = parts[2]; height = parts[3]; }
-        } else { width = viewPort.width; height = viewPort.height; }
     }
 
     const penWeight = parseFloat(penWeightInput.value);

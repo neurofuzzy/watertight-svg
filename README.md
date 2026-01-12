@@ -2,6 +2,8 @@
 
 **A high-performance geometric optimizer for SVG paths, designed for plotters, laser cutters, and CNC machines.**
 
+[**Live Demo**](https://neurofuzzy.github.io/watertight-svg/)
+
 Watertight SVG takes messy, disconnected, or overdrawn vector graphics and turns them into clean, continuous paths optimized for physical drawing machines. It solves common issues like "double-drawing" (overdraw), erratic travel movements, and disconnected segments.
 
 ![Watertight SVG UI](./screenshot.png)
