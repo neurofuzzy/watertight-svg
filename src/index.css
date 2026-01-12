@@ -186,6 +186,8 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  max-height: 100%;
+  overflow: hidden;
 }
 
 .preview-panel h2 {
@@ -399,13 +401,15 @@ body {
 .workspace {
   display: grid;
   grid-template-columns: 1fr 1fr 340px;
-  grid-template-rows: 1fr 80px;
+  grid-template-rows: minmax(400px, calc(100vh - 200px)) 80px;
   grid-template-areas:
     "original optimized settings"
     "dropzone dropzone settings";
   gap: var(--space-lg);
   align-items: stretch;
-  min-height: calc(100vh - 8rem);
+  height: calc(100vh - 4rem);
+  max-height: calc(100vh - 4rem);
+  overflow: hidden;
 }
 
 
