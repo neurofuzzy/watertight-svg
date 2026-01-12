@@ -101,7 +101,7 @@ export function renderPreview(
                 travelGroup.appendChild(penDown);
             }
 
-            lastPoint = end;
+            lastPoint = path.closed ? start : end;
         }
     }
 
