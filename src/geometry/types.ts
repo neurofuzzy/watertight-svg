@@ -97,7 +97,26 @@ export interface OptimizeOptions {
     fixWinding: boolean;
     /** Fill rule to use for winding correction */
     fillRule: 'evenodd' | 'nonzero';
+
+    // Output Scaling
+    /** Whether to scale output to fit a specific paper size */
+    scaleToFit: boolean;
+    /** Target paper size in millimeters (width, height) */
+    paperSize: { width: number; height: number };
+    /** Margin to leave around the paper edges in millimeters */
+    paperMargin: number;
+    /** Pen weight in millimeters for simulation/preview */
+    penWeight: number;
 }
+
+/** Standard Paper Sizes (mm) */
+export const PAPER_SIZES = {
+    A4: { width: 210, height: 297 },
+    A3: { width: 297, height: 420 },
+    Letter: { width: 215.9, height: 279.4 },
+    A5: { width: 148, height: 210 },
+    '12x12': { width: 304.8, height: 304.8 },
+};
 
 /** Default optimization options */
 export const DEFAULT_OPTIONS: OptimizeOptions = {
@@ -110,4 +129,9 @@ export const DEFAULT_OPTIONS: OptimizeOptions = {
     gapTolerance: 2,
     fixWinding: true,
     fillRule: 'evenodd',
+
+    scaleToFit: false,
+    paperSize: PAPER_SIZES.A4,
+    paperMargin: 10,
+    penWeight: 0.3, // Standard fine tip
 };

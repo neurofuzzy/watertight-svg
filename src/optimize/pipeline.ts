@@ -12,6 +12,7 @@ import { autoClosePaths, bridgeGaps } from './fill';
 import { fixWinding } from './winding';
 import { findRegions } from './regions';
 import { splitPathsAtIntersections } from '../geometry/intersection';
+import { fitToPaper } from './scale';
 
 export interface OptimizeResult {
     /** Original parsed document */
@@ -168,6 +169,9 @@ export function optimizeDocument(
     const optimized: SVGDocument = {
         ...original,
         paths,
+        width: original.width,
+        height: original.height,
+        viewBox: original.viewBox
     };
 
     const afterStats = calculateStats(paths);

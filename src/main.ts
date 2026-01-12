@@ -3,9 +3,10 @@
  */
 
 import './index.css';
-import type { OptimizeOptions } from './geometry/types';
+import { type OptimizeOptions, PAPER_SIZES, type SVGDocument } from './geometry/types';
 import { parseSVG } from './geometry/parser';
 import { formatStats, type OptimizeResult } from './optimize';
+import { fitToPaper } from './optimize/scale';
 import type { WorkerMessage, WorkerResponse } from './worker';
 import { renderPreview } from './ui/preview';
 import { downloadSVG } from './ui/export';
@@ -21,7 +22,6 @@ const originalPreview = document.getElementById('originalPreview')!;
 const optimizedPreview = document.getElementById('optimizedPreview')!;
 const originalStats = document.getElementById('originalStats')!;
 const optimizedStats = document.getElementById('optimizedStats')!;
-const optimizeBtn = document.getElementById('optimizeBtn')!;
 const exportBtn = document.getElementById('exportBtn')!;
 
 // Control inputs
@@ -32,6 +32,18 @@ const gapToleranceInput = document.getElementById('gapTolerance') as HTMLInputEl
 const gapToleranceContainer = document.getElementById('gapToleranceContainer')!;
 const gapValueSpan = document.getElementById('gapValue')!;
 const fixWindingInput = document.getElementById('fixWinding') as HTMLInputElement;
+
+// Page Setup Controls
+const pageSetupBtn = document.getElementById('pageSetupBtn')!;
+const pageSetupModal = document.getElementById('pageSetupModal')!;
+const closePageSetupBtn = document.getElementById('closePageSetupBtn')!;
+const scaleToFitInput = document.getElementById('scaleToFit') as HTMLInputElement;
+const paperSettingsContainer = document.getElementById('paperSettings')!;
+const paperSizeSelect = document.getElementById('paperSize') as HTMLSelectElement;
+const paperMarginInput = document.getElementById('paperMargin') as HTMLInputElement;
+const marginValueSpan = document.getElementById('marginValue')!;
+const penWeightInput = document.getElementById('penWeight') as HTMLInputElement;
+const penWeightValueSpan = document.getElementById('penWeightValue')!;
 
 // Application state
 let currentSVG: string | null = null;
@@ -140,6 +152,45 @@ function setupControls() {
     fillRadios.forEach(radio => {
         radio.addEventListener('change', autoOptimize);
     });
+
+    // Output Settings Listeners
+    // Decoupled from autoOptimize as per user request
+    scaleToFitInput.addEventListener('change', updatePageSettings);
+    paperSizeSelect.addEventListener('change', updatePageSettings);
+    paperMarginInput.addEventListener('input', () => {
+        marginValueSpan.textContent = `${paperMarginInput.value}mm`;
+    });
+    paperMarginInput.addEventListener('change', updatePageSettings);
+
+    penWeightInput.addEventListener('input', () => {
+        penWeightValueSpan.textContent = `${penWeightInput.value}mm`;
+    });
+    penWeightInput.addEventListener('change', updatePageSettings);
+
+    // Page Setup Modal Controls
+    pageSetupBtn.addEventListener('click', () => {
+        pageSetupModal.classList.remove('hidden');
+    });
+
+    closePageSetupBtn.addEventListener('click', () => {
+        pageSetupModal.classList.add('hidden');
+    });
+
+    // Close modal on click outside
+    pageSetupModal.addEventListener('click', (e) => {
+        if (e.target === pageSetupModal) {
+            pageSetupModal.classList.add('hidden');
+        }
+    });
+}
+
+// Update page settings (Simulator/Export only)
+function updatePageSettings() {
+    updateDependencies();
+    // If simulator is active/open, we might want to refresh it?
+    // For now, initSimulator() reads from inputs, so clicking "Simulate" again works.
+    // If we wanted live simulator updates, we'd check visibility:
+    // if (!simulationModal.classList.contains('hidden')) initSimulator();
 }
 
 // Update UI dependencies based on rules
@@ -166,6 +217,15 @@ function updateDependencies() {
         gapToleranceContainer.style.pointerEvents = 'auto';
     }
 
+    // 2.5 Scale Settings
+    if (scaleToFitInput.checked) {
+        paperSettingsContainer.style.opacity = '1';
+        paperSettingsContainer.style.pointerEvents = 'auto';
+    } else {
+        paperSettingsContainer.style.opacity = '0.5';
+        paperSettingsContainer.style.pointerEvents = 'none';
+    }
+
     // 3. Fix Winding requires Merge + Overdraw + Fill
     const windingEnabled = merge && overdraw && (fillStrategy !== 'none');
     if (windingEnabled) {
@@ -186,15 +246,46 @@ function getFillStrategy(): 'none' | 'close' | 'regions' {
 
 // Setup buttons
 function setupButtons() {
-    optimizeBtn.addEventListener('click', () => {
-        if (currentSVG) {
-            runOptimization();
-        }
-    });
+    // optimizeBtn removed - optimization is automatic
 
     exportBtn.addEventListener('click', () => {
         if (currentResult) {
-            downloadSVG(currentResult.optimized, 'optimized.svg');
+            let paths = currentResult.optimized.paths;
+            let width = currentResult.optimized.width;
+            let height = currentResult.optimized.height;
+            let viewBox = currentResult.optimized.viewBox;
+
+            // Apply Scale to Fit if enabled
+            if (scaleToFitInput.checked) {
+                const paperSize = PAPER_SIZES[paperSizeSelect.value as keyof typeof PAPER_SIZES] || PAPER_SIZES.A4;
+                const margin = parseFloat(paperMarginInput.value);
+                const { paths: scaledPaths } = fitToPaper(paths, paperSize.width, paperSize.height, margin);
+                paths = scaledPaths;
+                width = paperSize.width;
+                height = paperSize.height;
+                viewBox = `0 0 ${width} ${height}`;
+            }
+
+            // Inject Pen Weight for Export
+            const penWeight = parseFloat(penWeightInput.value);
+            // We need to apply this to all paths
+            paths = paths.map(p => ({
+                ...p,
+                meta: {
+                    ...p.meta,
+                    strokeWidth: penWeight.toString()
+                }
+            }));
+
+            const docToExport: SVGDocument = {
+                ...currentResult.optimized,
+                paths,
+                width,
+                height,
+                viewBox
+            };
+
+            downloadSVG(docToExport, 'optimized.svg');
         }
     });
 }
@@ -214,6 +305,11 @@ function getOptions(): OptimizeOptions {
         gapTolerance: parseFloat(gapToleranceInput.value),
         fixWinding: fixWindingInput.checked,
         fillRule: 'evenodd',
+
+        scaleToFit: scaleToFitInput.checked,
+        paperSize: PAPER_SIZES[paperSizeSelect.value as keyof typeof PAPER_SIZES] || PAPER_SIZES.A4,
+        paperMargin: parseFloat(paperMarginInput.value),
+        penWeight: parseFloat(penWeightInput.value),
     };
 }
 
@@ -363,7 +459,7 @@ function setLoading(loading: boolean) {
             overlay.innerHTML = '<div class="spinner"></div>';
             optimizedPreview.appendChild(overlay);
         }
-        optimizeBtn.setAttribute('disabled', 'true');
+
         exportBtn.setAttribute('disabled', 'true');
         document.body.style.cursor = 'wait';
     } else {
@@ -371,7 +467,6 @@ function setLoading(loading: boolean) {
         const overlay = document.getElementById('loadingOverlay');
         if (overlay) overlay.remove();
 
-        optimizeBtn.removeAttribute('disabled');
         // Export button state is handled in success
         document.body.style.cursor = 'default';
     }
@@ -436,21 +531,28 @@ function initSimulator() {
     }
 
     // Load data
-    const viewPort = currentResult.optimized.viewBox || { width: 800, height: 600 };
-    // Handle viewBox as string or object
+    let paths = currentResult.optimized.paths;
     let width = 800, height = 600;
-    if (typeof viewPort === 'string') {
-        const parts = viewPort.split(' ').map(parseFloat);
-        if (parts.length === 4) {
-            width = parts[2];
-            height = parts[3];
-        }
+
+    // Apply Page Setup Scanning
+    if (scaleToFitInput.checked) {
+        const paperSize = PAPER_SIZES[paperSizeSelect.value as keyof typeof PAPER_SIZES] || PAPER_SIZES.A4;
+        const margin = parseFloat(paperMarginInput.value);
+        const { paths: scaledPaths } = fitToPaper(paths, paperSize.width, paperSize.height, margin);
+        paths = scaledPaths;
+        width = paperSize.width;
+        height = paperSize.height;
     } else {
-        width = viewPort.width;
-        height = viewPort.height;
+        // Use original dimensions
+        const viewPort = currentResult.optimized.viewBox || { width: 800, height: 600 };
+        if (typeof viewPort === 'string') {
+            const parts = viewPort.split(' ').map(parseFloat);
+            if (parts.length === 4) { width = parts[2]; height = parts[3]; }
+        } else { width = viewPort.width; height = viewPort.height; }
     }
 
-    simulator.setData(currentResult.optimized.paths, { width, height });
+    const penWeight = parseFloat(penWeightInput.value);
+    simulator.setData(paths, { width, height }, penWeight, scaleToFitInput.checked);
 
     // Reset controls
     simScrubber.value = "0";

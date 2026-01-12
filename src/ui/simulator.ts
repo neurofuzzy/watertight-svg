@@ -30,6 +30,10 @@ export class Simulator {
     private showBlots: boolean = false;
     private showTravel: boolean = true;
 
+    // Background Data (removed - keeping buffer for compatibility if needed, but not using it)
+    private penWeight: number = 0.3;
+    private pixelScale: number = 1;
+
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
         const gl = canvas.getContext('webgl2', { alpha: false, antialias: true });
@@ -51,7 +55,7 @@ export class Simulator {
     private vertexShaderSource = `#version 300 es
     in vec2 a_position;
     in float a_cumDist;
-    in float a_type; // 0 = travel (up), 1 = draw (down)
+    in float a_type; // 0 = travel, 1 = draw, 2 = outline
 
     uniform vec2 u_resolution;
     uniform vec2 u_scale;
@@ -104,13 +108,20 @@ export class Simulator {
             return;
         }
 
+        if (v_type > 1.5) {
+             // Outline - Dark Gray
+             outColor = vec4(0.3, 0.3, 0.3, 1.0);
+             return;
+        }
+
         if (v_type > 0.5) {
-            // Draw (Pen Down) - Bright Blue/White
-            outColor = vec4(0.4, 0.6, 1.0, 1.0);
+            // Draw (Pen Down)
+            // Use blue for visibility on dark background
+            outColor = vec4(0.3, 0.6, 1.0, 1.0); 
         } else {
             // Travel (Pen Up)
             if (!u_showTravel) discard;
-            // Travel (Pen Up) - Dim Red, lower opacity
+            // Travel - Red
             outColor = vec4(1.0, 0.2, 0.4, 0.3);
         }
     }`;
@@ -141,7 +152,17 @@ export class Simulator {
         return shader;
     }
 
-    public setData(paths: Path[], bounds: { width: number, height: number }) {
+    public setData(paths: Path[], bounds: { width: number, height: number }, penWeight: number = 0.3, showOutline: boolean = false) {
+        // penWeight is unused in simulator (WebGL line width limit), but kept for API compatibility if needed
+        // or we can just ignore it.
+        // this.penWeight = penWeight; // Removed usage
+
+        // 0. Outline Data
+        let outlinePoints = 0;
+        if (showOutline) {
+            outlinePoints = 8; // 4 lines * 2 points
+        }
+
         // 1. Line Data
         let totalPoints = 0;
         // Calculate size first
@@ -152,12 +173,32 @@ export class Simulator {
         }
         totalPoints += Math.max(0, (paths.length - 1) * 2); // Travel moves
 
-        const lineData = new Float32Array(totalPoints * 4);
+        const lineData = new Float32Array((totalPoints + outlinePoints) * 4);
 
         // 2. Blot Data (Start and End of every path)
         const blotData = new Float32Array(paths.length * 2 * 4);
 
         let lineOffset = 0;
+
+        // write outline first
+        if (showOutline) {
+            const w = bounds.width;
+            const h = bounds.height;
+            // Top
+            lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            lineData[lineOffset++] = w; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            // Right
+            lineData[lineOffset++] = w; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            lineData[lineOffset++] = w; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            // Bottom
+            lineData[lineOffset++] = w; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            lineData[lineOffset++] = 0; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            // Left
+            lineData[lineOffset++] = 0; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+        }
+        this.vertexCount = (totalPoints + outlinePoints); // Correct vertex count? check draw
+
         let blotOffset = 0;
         let cumDist = 0;
         let lastPoint: Point | null = null;
@@ -274,8 +315,6 @@ export class Simulator {
         this.draw();
     }
 
-    // ... fitView, resize, play, pause, setSpeed, setProgress, animate ... (keep existing)
-    // Need to preserve these due to partial replacement limit
     private fitView(bounds: { width: number, height: number }) {
         const gl = this.gl;
         gl.useProgram(this.program);
@@ -291,6 +330,7 @@ export class Simulator {
         const scaleX = (this.canvas.width - padding * 2) / bounds.width;
         const scaleY = (this.canvas.height - padding * 2) / bounds.height;
         const scale = Math.min(scaleX, scaleY);
+        this.pixelScale = scale; // Store for line width calc
 
         const offsetX = (this.canvas.width - bounds.width * scale) / 2;
         const offsetY = (this.canvas.height - bounds.height * scale) / 2;
@@ -394,6 +434,13 @@ export class Simulator {
         gl.enableVertexAttribArray(distLoc);
         gl.enableVertexAttribArray(typeLoc);
 
+        // Calculate Line Width based on Pen Weight
+        // pixelScale = pixels / mm
+        // penWeight = mm
+        // WebGL Limit: Line width is restricted to 1px on most platforms (including Mac)
+        // const lineWidth = Math.max(1, this.penWeight * this.pixelScale);
+        gl.lineWidth(1.0);
+
         // 1. Draw Lines
         gl.uniform1i(uIsPoints, 0); // False
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
@@ -405,7 +452,9 @@ export class Simulator {
         // 2. Draw Blots (if enabled)
         if (this.showBlots) {
             gl.uniform1i(uIsPoints, 1); // True
-            gl.uniform1f(uPointSize, 2.5); // Blot size (75% of 6.0)
+            // Fixed blot size since we aren't simulating weight
+            gl.uniform1f(uPointSize, 5.0);
+
             gl.bindBuffer(gl.ARRAY_BUFFER, this.blotBuffer);
             gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, stride, 0);
             gl.vertexAttribPointer(distLoc, 1, gl.FLOAT, false, stride, 8);

@@ -377,6 +377,25 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.secondary-actions {
+  display: flex;
+  gap: var(--space-sm);
+  flex: 1;
+}
+
+.settings-modal {
+  max-width: 500px;
+  height: auto;
+  padding: var(--space-xl);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-xl);
+  gap: var(--space-md);
+}
+
 .btn-primary:hover:not(:disabled) {
   box-shadow: var(--shadow-glow);
   transform: translateY(-1px);
@@ -761,4 +780,30 @@ body {
 
 .hidden {
   display: none !important;
+}
+
+/* Secondary Actions (Simulate/Export/Page Setup) */
+.secondary-actions {
+  display: flex;
+  gap: var(--space-sm);
+  flex: 1;
+}
+
+/* Page Setup Modal Styles */
+.settings-modal {
+  max-width: 500px;
+  height: auto;
+  padding: var(--space-xl);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-xl);
+  gap: var(--space-md);
+}
+
+.secondary-actions button {
+  font-size: 0.8rem;
+  padding: var(--space-xs) var(--space-sm);
 }
