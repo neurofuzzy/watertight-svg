@@ -128,7 +128,7 @@ function setupControls() {
         }
     };
 
-    breakApartInput.addEventListener('change', autoOptimize);
+
     mergePathsInput.addEventListener('change', autoOptimize);
     removeOverdrawInput.addEventListener('change', autoOptimize);
     sortPathsInput.addEventListener('change', autoOptimize);
