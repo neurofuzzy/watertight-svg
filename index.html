@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description"
+    content="SVG optimizer for plotters and cutting machines - merge paths, remove overdraw, optimize cut order" />
+  <title>Watertight SVG - Plotter Optimizer</title>
+  <script type="module" crossorigin src="./assets/index-BDiKBQ6B.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-Dp6mKLtv.css">
+</head>
+
+<body>
+  <div id="app">
+    <main class="main">
+      <div id="workspace" class="workspace">
+        <div class="preview-panel" style="grid-area: original;">
+          <h2>Original</h2>
+          <div class="preview-canvas" id="originalPreview"></div>
+          <div class="stats" id="originalStats"></div>
+        </div>
+
+        <div class="preview-panel" style="grid-area: optimized;">
+          <div class="panel-header">
+            <h2>Optimized</h2>
+            <div class="legend">
+              <div class="legend-item"><span class="swatch travel"></span>Travel</div>
+              <div class="legend-item"><span class="swatch pen-up"></span>Up</div>
+              <div class="legend-item"><span class="swatch pen-down"></span>Down</div>
+            </div>
+          </div>
+          <div class="canvas-container">
+            <div class="preview-canvas" id="optimizedPreview"></div>
+          </div>
+          <div class="stats" id="optimizedStats"></div>
+        </div>
+
+        <section class="drop-zone" id="dropZone" style="grid-area: dropzone;">
+          <div class="drop-content">
+            <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            <p class="drop-text">Drop SVG here or <button type="button" id="browseBtn">browse</button></p>
+            <input type="file" id="fileInput" accept=".svg,image/svg+xml" hidden />
+          </div>
+        </section>
+
+        <aside class="controls" id="controls" style="grid-area: settings;">
+          <h2>Optimization Settings</h2>
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="removeOverdraw" checked />
+              Remove overdraw
+            </label>
+          </div>
+
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="mergePaths" checked />
+              Merge connected segments
+            </label>
+          </div>
+
+          <div class="control-group">
+            <label class="group-label">Fill Strategy</label>
+            <div class="radio-group">
+              <label class="radio-label">
+                <input type="radio" name="fillStrategy" value="none" />
+                None
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="fillStrategy" value="close" />
+                Close Ends
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="fillStrategy" value="regions" checked />
+                Find Regions
+              </label>
+            </div>
+            <div class="slider-group" id="gapToleranceContainer">
+              <input type="range" id="gapTolerance" min="0" max="10" step="0.5" value="2" />
+              <span id="gapValue">2px</span>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="fixWinding" checked />
+              Fix path winding (Even-Odd)
+            </label>
+          </div>
+
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="sortPaths" checked />
+              Optimize path order
+            </label>
+          </div>
+
+          <div class="actions">
+            <!-- Optimize button removed, auto-optimize is active -->
+            <div class="secondary-actions">
+              <button type="button" id="pageSetupBtn" class="btn-secondary">Page Setup</button>
+              <button type="button" id="simulateBtn" class="btn-secondary" disabled>Simulate</button>
+              <button type="button" id="exportBtn" class="btn-secondary" disabled>Export SVG</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </main>
+
+    <!-- Page Setup Modal -->
+    <div id="pageSetupModal" class="modal hidden">
+      <div class="modal-content settings-modal">
+        <h3>Page Setup</h3>
+
+        <div class="control-group">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <label>
+              <input type="checkbox" id="scaleToFit" />
+              Scale to Fit Paper
+            </label>
+            <label>
+              <input type="checkbox" id="rotateOutput" />
+              Rotate 90°
+            </label>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <label>Units</label>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span id="unitLabelMM" style="font-size: 0.8em; opacity: 0.5;">mm</span>
+              <label class="switch">
+                <input type="checkbox" id="unitToggle" checked>
+                <span class="slider round"></span>
+              </label>
+              <span id="unitLabelIN" style="font-size: 0.8em; font-weight: bold;">in</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group" id="paperSettings" style="opacity: 0.5; pointer-events: none;">
+          <!-- Simplified: No presets, just custom W/H -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+            <div>
+              <label style="font-size: 0.9em;">Width (<span class="unit-label">mm</span>)</label>
+              <input type="number" id="customWidth" value="8.5" step="0.1" style="width: 100%; padding: 4px;" />
+            </div>
+            <div>
+              <label style="font-size: 0.9em;">Height (<span class="unit-label">mm</span>)</label>
+              <input type="number" id="customHeight" value="11" step="0.1" style="width: 100%; padding: 4px;" />
+            </div>
+          </div>
+
+          <label>Margin (<span class="unit-label">mm</span>)</label>
+          <div class="slider-group">
+            <input type="range" id="paperMargin" min="0" max="50" value="10" />
+            <span id="marginValue">10<span class="unit-label">mm</span></span>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label>Pen Weight (<span class="unit-label">mm</span>)</label>
+          <div class="slider-group">
+            <input type="range" id="penWeight" min="0.1" max="5.0" step="0.1" value="0.3" />
+            <span id="penWeightValue">0.3<span class="unit-label">mm</span></span>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="closePageSetupBtn" class="btn-primary">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Simulation Modal -->
+    <div id="simulationModal" class="modal hidden">
+      <div class="modal-content">
+        <button class="modal-close" id="closeSimBtn">&times;</button>
+        <div class="sim-canvas-container">
+          <canvas id="simCanvas"></canvas>
+        </div>
+        <div class="sim-controls">
+          <button id="simPlayPause" class="icon-btn">
+            <!-- Play Icon -->
+            <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            <!-- Pause Icon (hidden by default) -->
+            <svg class="pause-icon hidden" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+            </svg>
+          </button>
+
+          <div class="sim-time" id="simTime">0:00 / 0:00</div>
+
+          <div class="sim-scrubber-container">
+            <input type="range" id="simScrubber" min="0" max="100" value="0" step="0.1" />
+            <div class="sim-progress-bar" id="simProgressBar"></div>
+          </div>
+
+          <div class="sim-speed-container">
+            <span class="speed-label">Speed</span>
+            <select id="simSpeed">
+              <option value="1">1x</option>
+              <option value="5">5x</option>
+              <option value="10" selected>10x</option>
+              <option value="50">50x</option>
+              <option value="100">100x</option>
+            </select>
+            <div class="blot-toggle">
+              <input type="checkbox" id="simBlots" />
+              <label for="simBlots">Blots</label>
+            </div>
+            <div class="blot-toggle">
+              <input type="checkbox" id="simTravel" checked />
+              <label for="simTravel">Travel</label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>
