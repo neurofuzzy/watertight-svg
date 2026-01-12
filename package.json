@@ -12,7 +12,10 @@
     "geometry",
     "path-finding",
     "TSP",
-    "visualization"
+    "visualization",
+    "simulator",
+    "simulation",
+    "path-planning"
   ],
   "author": "Geoff",
   "license": "MIT",

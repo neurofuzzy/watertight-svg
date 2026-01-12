@@ -6,6 +6,7 @@
  */
 
 import type { Point } from './types';
+import { SpatialHash } from './spatial-hash';
 
 /** A line segment defined by two endpoints */
 export interface Segment {
@@ -40,20 +41,70 @@ export function findAllIntersections(
 ): Intersection[] {
     const intersections: Map<string, Intersection> = new Map();
     const total = segments.length;
+
+    // Heuristic: Grid cell size roughly based on average segment length or fixed size
+    // For general SVGs, a fixed size like 10-50 units works well.
+    // Let's use 20 as a reasonable default, or calculate average.
+    const CELL_SIZE = 20;
+    const grid = new SpatialHash<number>(CELL_SIZE);
+
+    // 1. Populate Grid
+    for (let i = 0; i < segments.length; i++) {
+        const s = segments[i];
+        const minX = Math.min(s.p1.x, s.p2.x);
+        const minY = Math.min(s.p1.y, s.p2.y);
+        const maxX = Math.max(s.p1.x, s.p2.x);
+        const maxY = Math.max(s.p1.y, s.p2.y);
+
+        // Insert into all overlapping cells
+        // Optimization: For strict line segments, we could walk the line (Bresenham)
+        // enabling a simpler AABB fill is easier and usually sufficient unless segments are diagonal and huge.
+        const startX = Math.floor(minX / CELL_SIZE);
+        const startY = Math.floor(minY / CELL_SIZE);
+        const endX = Math.floor(maxX / CELL_SIZE);
+        const endY = Math.floor(maxY / CELL_SIZE);
+
+        for (let gx = startX; gx <= endX; gx++) {
+            for (let gy = startY; gy <= endY; gy++) {
+                grid.insert(gx * CELL_SIZE, gy * CELL_SIZE, i); // Store index
+            }
+        }
+    }
+
     let lastReport = 0;
 
+    // 2. Query and Check
     for (let i = 0; i < segments.length; i++) {
-        // Report progress every ~1% or so to avoid spamming
+        // Report progress
         if (onProgress) {
             const now = Date.now();
-            if (now - lastReport > 100) { // Throttle to 100ms
+            if (now - lastReport > 100) {
                 onProgress(i / total);
                 lastReport = now;
             }
         }
 
-        for (let j = i + 1; j < segments.length; j++) {
-            const intersection = segmentIntersection(segments[i], segments[j]);
+        const s1 = segments[i];
+        const minX = Math.min(s1.p1.x, s1.p2.x);
+        const minY = Math.min(s1.p1.y, s1.p2.y);
+        const maxX = Math.max(s1.p1.x, s1.p2.x);
+        const maxY = Math.max(s1.p1.y, s1.p2.y);
+
+        // Find candidates
+        const candidates = grid.queryRegion(minX, minY, maxX, maxY);
+
+        for (const j of candidates) {
+            // Optimization: Only check if j > i to avoid double checking and self-checking
+            if (j <= i) continue;
+
+            // Deduplication logic handled by j > i, but need to be careful if using Set for pairs?
+            // Actually, querying cells might return the same candidate multiple times if they overlap multiple cells.
+            // But since we iterate i once, and j > i, we just need to ensure we don't check the same j multiple times for a single i.
+            // Using a local specialized set or just simple dedupe in the candidates array?
+            // queryRegion returns deduplicated array in my implementation (Set -> Array).
+
+            const s2 = segments[j];
+            const intersection = segmentIntersection(s1, s2);
 
             if (intersection) {
                 // Snap to grid for deduplication
@@ -61,23 +112,23 @@ export function findAllIntersections(
 
                 if (intersections.has(key)) {
                     const existing = intersections.get(key)!;
-                    if (!existing.segments.includes(segments[i].id)) {
-                        existing.segments.push(segments[i].id);
+                    if (!existing.segments.includes(s1.id)) {
+                        existing.segments.push(s1.id);
                     }
-                    if (!existing.segments.includes(segments[j].id)) {
-                        existing.segments.push(segments[j].id);
+                    if (!existing.segments.includes(s2.id)) {
+                        existing.segments.push(s2.id);
                     }
                 } else {
                     intersections.set(key, {
                         point: intersection,
-                        segments: [segments[i].id, segments[j].id],
+                        segments: [s1.id, s2.id],
                     });
                 }
             }
         }
     }
 
-    if (onProgress) onProgress(1.0); // Ensure 100% at end
+    if (onProgress) onProgress(1.0);
 
     return Array.from(intersections.values());
 }

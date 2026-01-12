@@ -9,6 +9,7 @@
 
 import type { Path, Point } from '../geometry/types';
 import { pointsEqual, pathStart, pathEnd, reversePath, distance } from '../geometry/math';
+import { SpatialHash } from '../geometry/spatial-hash';
 
 /**
  * Merge paths that share endpoints into longer continuous paths.
@@ -51,12 +52,39 @@ export function mergePaths(paths: Path[], tolerance: number = 0.1): Path[] {
  * Single merge pass - try to merge each path with its best neighbor
  * Returns number of merges performed
  */
+/**
+ * Single merge pass - try to merge each path with its best neighbor
+ * Returns number of merges performed
+ */
 function mergePass(chains: Path[], tolerance: number): number {
     let merges = 0;
     const toRemove = new Set<number>();
 
     // Build endpoint index for fast lookup
-    const endpointIndex = buildEndpointIndex(chains);
+    // Use heuristic cell size ~5x tolerance or min 10
+    const cellSize = Math.max(tolerance * 10, 10);
+    const spatialIndex = new SpatialHash<EndpointInfo>(cellSize);
+
+    // Populate index
+    for (let i = 0; i < chains.length; i++) {
+        const chain = chains[i];
+        if (chain.closed || chain.points.length < 2) continue;
+
+        const start = pathStart(chain);
+        const end = pathEnd(chain);
+
+        spatialIndex.insert(start.x, start.y, {
+            chainIndex: i,
+            isStart: true,
+            point: start
+        });
+
+        spatialIndex.insert(end.x, end.y, {
+            chainIndex: i,
+            isStart: false,
+            point: end
+        });
+    }
 
     for (let i = 0; i < chains.length; i++) {
         if (toRemove.has(i)) continue;
@@ -70,7 +98,7 @@ function mergePass(chains: Path[], tolerance: number): number {
         // Find best match for chain's end point (looking for a start to connect to)
         let bestMatch = findBestEndpointMatch(
             chainEnd,
-            endpointIndex,
+            spatialIndex,
             i,
             toRemove,
             tolerance,
@@ -80,7 +108,7 @@ function mergePass(chains: Path[], tolerance: number): number {
         if (bestMatch) {
             // Merge: chain -> bestMatch (possibly reversed)
             const other = chains[bestMatch.chainIndex];
-            const merged = connectChains(chain, other, bestMatch.connectType);
+            const merged = connectChains(chain, other, bestMatch.connectType, tolerance);
             chains[i] = merged;
             toRemove.add(bestMatch.chainIndex);
             merges++;
@@ -90,7 +118,7 @@ function mergePass(chains: Path[], tolerance: number): number {
         // Try matching chain's start point (looking for an end to connect to)
         bestMatch = findBestEndpointMatch(
             chainStart,
-            endpointIndex,
+            spatialIndex,
             i,
             toRemove,
             tolerance,
@@ -101,7 +129,7 @@ function mergePass(chains: Path[], tolerance: number): number {
         if (bestMatch) {
             // Merge: bestMatch -> chain (possibly reversed)
             const other = chains[bestMatch.chainIndex];
-            const merged = connectChains(other, chain, bestMatch.connectType);
+            const merged = connectChains(other, chain, bestMatch.connectType, tolerance);
             chains[i] = merged;
             toRemove.add(bestMatch.chainIndex);
             merges++;
@@ -129,38 +157,13 @@ interface MatchResult {
     distance: number;
 }
 
-/**
- * Build an index of all endpoints for fast spatial queries
- */
-function buildEndpointIndex(chains: Path[]): EndpointInfo[] {
-    const index: EndpointInfo[] = [];
-
-    for (let i = 0; i < chains.length; i++) {
-        const chain = chains[i];
-        if (chain.closed || chain.points.length < 2) continue;
-
-        index.push({
-            chainIndex: i,
-            isStart: true,
-            point: pathStart(chain),
-        });
-
-        index.push({
-            chainIndex: i,
-            isStart: false,
-            point: pathEnd(chain),
-        });
-    }
-
-    return index;
-}
 
 /**
- * Find the best endpoint match for a given point
+ * Find the best endpoint match for a given point using Spatial Hash
  */
 function findBestEndpointMatch(
     point: Point,
-    index: EndpointInfo[],
+    index: SpatialHash<EndpointInfo>,
     excludeChain: number,
     excluded: Set<number>,
     tolerance: number,
@@ -169,13 +172,24 @@ function findBestEndpointMatch(
 ): MatchResult | null {
     let best: MatchResult | null = null;
 
-    for (const ep of index) {
+    // Query neighbors
+    // Query a region around the point + tolerance
+    const candidates = index.queryRegion(
+        point.x - tolerance,
+        point.y - tolerance,
+        point.x + tolerance,
+        point.y + tolerance
+    );
+
+    for (const ep of candidates) {
         if (ep.chainIndex === excludeChain) continue;
         if (excluded.has(ep.chainIndex)) continue;
-        if (chains[ep.chainIndex].closed) continue;
-
+        // Check actual distance
         const dist = distance(point, ep.point);
         if (dist > tolerance) continue;
+
+        // Double check closed (shouldn't be in index, but safe)
+        if (chains[ep.chainIndex].closed) continue;
 
         // Determine connection type based on which endpoints are meeting
         let connectType: MatchResult['connectType'];
@@ -217,14 +231,16 @@ function findBestEndpointMatch(
  * Handles reversing as needed
  */
 function connectChains(
-    first: Path,
-    second: Path,
-    connectType: MatchResult['connectType']
+    a: Path,
+    b: Path,
+    type: 'end-to-start' | 'end-to-end' | 'start-to-start' | 'start-to-end',
+    tolerance: number = 0.001
 ): Path {
-    let a = first;
-    let b = second;
+    let currentA = a;
+    let currentB = b;
+    let points: Point[];
 
-    switch (connectType) {
+    switch (type) {
         case 'end-to-start':
             // Ideal case: a.end -> b.start
             // No reversal needed
@@ -233,29 +249,29 @@ function connectChains(
         case 'end-to-end':
             // a.end <-> b.end
             // Reverse b so b.end becomes b.start
-            b = reversePath(b);
+            currentB = reversePath(currentB);
             break;
 
         case 'start-to-start':
             // a.start <-> b.start
             // Reverse a so a.start becomes a.end
-            a = reversePath(a);
+            currentA = reversePath(currentA);
             break;
 
         case 'start-to-end':
             // a.start -> b.end
             // Reverse both
-            a = reversePath(a);
-            b = reversePath(b);
+            currentA = reversePath(currentA);
+            currentB = reversePath(currentB);
             break;
     }
 
     // Join: remove duplicate point at junction
-    const points = [...a.points, ...b.points.slice(1)];
+    points = [...currentA.points, ...currentB.points.slice(1)];
 
     // Check if this creates a closed path
     const closed = points.length > 2 &&
-        pointsEqual(points[0], points[points.length - 1], 0.001);
+        pointsEqual(points[0], points[points.length - 1], tolerance); // Use tolerance!
 
     if (closed) {
         points.pop(); // Remove duplicate closing point
@@ -264,16 +280,8 @@ function connectChains(
     return {
         points,
         closed,
-        meta: a.meta || b.meta,
+        meta: a.meta || b.meta, // Preserve metadata
     };
 }
 
-/** Join two paths into one (legacy, for compatibility) */
-function joinPaths(a: Path, b: Path): Path {
-    const points = [...a.points, ...b.points.slice(1)];
-    return {
-        points,
-        closed: false,
-        meta: a.meta || b.meta,
-    };
-}
+

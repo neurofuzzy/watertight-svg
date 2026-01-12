@@ -4,7 +4,7 @@
 
 Watertight SVG takes messy, disconnected, or overdrawn vector graphics and turns them into clean, continuous paths optimized for physical drawing machines. It solves common issues like "double-drawing" (overdraw), erratic travel movements, and disconnected segments.
 
-![Watertight SVG UI](/Users/geoff/.gemini/antigravity/brain/75ecc3ed-226a-4a23-bed9-b2986800011c/legend_header_layout_1768183411422.png)
+![Watertight SVG UI](./screenshot.png)
 
 ## Features
 
@@ -23,6 +23,13 @@ Watertight SVG takes messy, disconnected, or overdrawn vector graphics and turns
 - **Local-First**: Runs entirely in your browser using a Web Worker. No data is sent to any server.
 - **Spatial Indexing**: Uses Quadtrees for O(n log n) intersection detection instead of brute force.
 - **Robust Math**: Handles epsilon-length segments and floating-point logic to ensure "watertight" loop closure.
+- **Simulator**: Built-in 2D plotter simulator to verify the drawing order and physical output before sending to a machine.
+
+### 📐 Page Setup & Export
+- **Custom Units**: Switch seamlessly between Millimeters and Inches.
+- **Scale to Fit**: Automatically scale your design to fit any custom paper size.
+- **Rotation**: Rotate output 90° for optimal paper usage.
+- **Simulator**: Visual playback of the plot job, including travel moves and pen-up/down events.
 
 ## Usage
 
@@ -31,9 +38,9 @@ Watertight SVG takes messy, disconnected, or overdrawn vector graphics and turns
    - **Remove Overdraw**: Essential for cleaning up exported CAD/Illustrator files.
    - **Merge Connected Segments**: Drastically reduces plot time.
    - **Find Regions**: strictly for when you need to detect closed shapes from line soup.
-3. Click **Optimize**.
-4. View the "Travel" (dashed pink), "Pen Up" (blue), and "Pen Down" (red) visualization to verify the path order.
-5. Click **Download Optimized** to save the clean SVG.
+4. Click **Page Setup** to define your paper size, units (mm/in), and scaling options.
+5. Click **Simulate** to watch a virtual plotter draw your design, ensuring the order is correct.
+6. Click **Download Optimized** to save the clean SVG.
 
 ## Local Development
 

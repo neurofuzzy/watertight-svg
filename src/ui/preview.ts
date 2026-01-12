@@ -44,7 +44,7 @@ export function renderPreview(
     svg.setAttribute('viewBox', `0 0 ${doc.width} ${doc.height}`);
     svg.setAttribute('width', '100%');
     svg.setAttribute('height', '100%');
-    svg.style.background = '#1a1a24';
+    svg.style.background = 'var(--bg-canvas)';
 
     // Create groups for layering
     const fillGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -101,7 +101,7 @@ export function renderPreview(
                 travelGroup.appendChild(penDown);
             }
 
-            lastPoint = end;
+            lastPoint = path.closed ? start : end;
         }
     }
 
