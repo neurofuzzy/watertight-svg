@@ -24,7 +24,6 @@ const optimizeBtn = document.getElementById('optimizeBtn')!;
 const exportBtn = document.getElementById('exportBtn')!;
 
 // Control inputs
-const breakApartInput = document.getElementById('breakApart') as HTMLInputElement;
 const mergePathsInput = document.getElementById('mergePaths') as HTMLInputElement;
 const removeOverdrawInput = document.getElementById('removeOverdraw') as HTMLInputElement;
 const sortPathsInput = document.getElementById('sortPaths') as HTMLInputElement;
@@ -33,7 +32,6 @@ const gapToleranceContainer = document.getElementById('gapToleranceContainer')!;
 const gapValueSpan = document.getElementById('gapValue')!;
 const fixWindingInput = document.getElementById('fixWinding') as HTMLInputElement;
 const fillRuleInput = document.getElementById('fillRule') as HTMLSelectElement;
-const useWasmInput = document.getElementById('useWasm') as HTMLInputElement;
 
 // Application state
 let currentSVG: string | null = null;
@@ -207,7 +205,6 @@ function getOptions(): OptimizeOptions {
     const fillStrategy = getFillStrategy();
 
     return {
-        breakApart: breakApartInput.checked,
         mergePaths: mergePathsInput.checked,
         removeOverdraw: removeOverdrawInput.checked,
         splitIntersections: true, // Always split intersections for better results
@@ -218,7 +215,6 @@ function getOptions(): OptimizeOptions {
         gapTolerance: parseFloat(gapToleranceInput.value),
         fixWinding: fixWindingInput.checked,
         fillRule: fillRuleInput.value as 'evenodd' | 'nonzero',
-        useWasm: useWasmInput.checked,
     };
 }
 
@@ -239,9 +235,6 @@ function createWorker() {
         } else if (type === 'progress') {
             const response = e.data as { type: 'progress', percent: number, message?: string };
             updateProgress(response.percent, response.message);
-        } else if (type === 'wasm-ready') {
-            const response = e.data as { type: 'wasm-ready', ready: boolean };
-            console.log(`[Main] WASM module ${response.ready ? 'loaded' : 'unavailable'}`);
         } else {
             const response = e.data as { type: 'error', error: string };
             handleOptimizationError(response.error);

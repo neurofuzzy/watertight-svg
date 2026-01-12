@@ -21,14 +21,16 @@
         </div>
 
         <div class="preview-panel" style="grid-area: optimized;">
-          <h2>Optimized</h2>
-          <div class="canvas-container">
-            <div class="preview-canvas" id="optimizedPreview"></div>
+          <div class="panel-header">
+            <h2>Optimized</h2>
             <div class="legend">
               <div class="legend-item"><span class="swatch travel"></span>Travel</div>
               <div class="legend-item"><span class="swatch pen-up"></span>Up</div>
               <div class="legend-item"><span class="swatch pen-down"></span>Down</div>
             </div>
+          </div>
+          <div class="canvas-container">
+            <div class="preview-canvas" id="optimizedPreview"></div>
           </div>
           <div class="stats" id="optimizedStats"></div>
         </div>
@@ -48,12 +50,7 @@
         <aside class="controls" id="controls" style="grid-area: settings;">
           <h2>Optimization Settings</h2>
           <!-- Control content stays same -->
-          <div class="control-group">
-            <label>
-              <input type="checkbox" id="breakApart" />
-              Break apart paths (stress test)
-            </label>
-          </div>
+
           <!-- ... -->
           <!-- I need to include the rest of the controls or use proper start/end lines -->
           <!-- Using start/end lines to preserve inner content is tricky if I move the whole block. -->
@@ -112,12 +109,6 @@
             </label>
           </div>
 
-          <div class="control-group">
-            <label>
-              <input type="checkbox" id="useWasm" checked />
-              Use WASM (faster) ⚡
-            </label>
-          </div>
 
           <div class="actions">
             <button type="button" id="optimizeBtn" class="btn-primary">Optimize</button>

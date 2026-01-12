@@ -79,8 +79,6 @@ export interface PathStats {
 
 /** Optimization options */
 export interface OptimizeOptions {
-    /** Break apart all paths into individual segments (stress test) */
-    breakApart: boolean;
     /** Merge connected segments into paths */
     mergePaths: boolean;
     /** Remove overlapping/duplicate segments */
@@ -99,13 +97,10 @@ export interface OptimizeOptions {
     fixWinding: boolean;
     /** Fill rule to use for winding correction */
     fillRule: 'evenodd' | 'nonzero';
-    /** Use WASM implementation for region finding (if available) */
-    useWasm: boolean;
 }
 
 /** Default optimization options */
 export const DEFAULT_OPTIONS: OptimizeOptions = {
-    breakApart: false,
     mergePaths: true,
     removeOverdraw: true,
     splitIntersections: true,
@@ -115,5 +110,4 @@ export const DEFAULT_OPTIONS: OptimizeOptions = {
     gapTolerance: 2,
     fixWinding: true,
     fillRule: 'evenodd',
-    useWasm: true,
 };

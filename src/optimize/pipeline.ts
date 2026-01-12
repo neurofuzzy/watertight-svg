@@ -10,7 +10,7 @@ import { removeOverdraw } from './overdraw';
 import { sortPathsWithTwoOpt, calculateTravelDistance } from './sort';
 import { autoClosePaths, bridgeGaps } from './fill';
 import { fixWinding } from './winding';
-import { findRegionsBridge } from './wasm-bridge';
+import { findRegions } from './regions';
 import { splitPathsAtIntersections } from '../geometry/intersection';
 
 export interface OptimizeResult {
@@ -56,35 +56,7 @@ export function optimizeDocument(
     const scaledOptions = { ...options };
     scaledOptions.gapTolerance *= SCALE;
 
-    // Step 0: Break apart paths (stress test)
-    if (scaledOptions.breakApart) {
-        const brokenPaths: Path[] = [];
-        for (const path of paths) {
-            for (let i = 0; i < path.points.length - 1; i++) {
-                brokenPaths.push({
-                    points: [path.points[i], path.points[i + 1]],
-                    closed: false,
-                    meta: path.meta
-                });
-            }
-            // If closed, add closing segment
-            if (path.closed && path.points.length > 1) {
-                brokenPaths.push({
-                    points: [path.points[path.points.length - 1], path.points[0]],
-                    closed: false,
-                    meta: path.meta
-                });
-            }
-        }
 
-        // Shuffle segments to stress-test sorting/merging (Fisher-Yates)
-        for (let i = brokenPaths.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [brokenPaths[i], brokenPaths[j]] = [brokenPaths[j], brokenPaths[i]];
-        }
-
-        paths = brokenPaths;
-    }
 
     // Step 0.5: Split segments at all intersection points (NEW)
     // This ensures no crossing segments - all intersections become proper vertices
@@ -131,10 +103,10 @@ export function optimizeDocument(
         // 0.1 unscaled pixels -> 0.1 * SCALE in scaled space
         const STRICT_TOLERANCE = 0.1 * SCALE;
 
-        let regions = findRegionsBridge(bridgedPaths, {
+        let regions = findRegions(bridgedPaths, {
             tolerance: STRICT_TOLERANCE,
             onProgress: onProgress ? (p: number) => onProgress(p * regionsRange) : undefined
-        }, scaledOptions.useWasm);
+        });
 
         // Step 4: Fix winding for regions
         // OPTIMIZATION: Only run winding correction on the newly found regions
