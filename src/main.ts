@@ -32,7 +32,6 @@ const gapToleranceInput = document.getElementById('gapTolerance') as HTMLInputEl
 const gapToleranceContainer = document.getElementById('gapToleranceContainer')!;
 const gapValueSpan = document.getElementById('gapValue')!;
 const fixWindingInput = document.getElementById('fixWinding') as HTMLInputElement;
-const fillRuleInput = document.getElementById('fillRule') as HTMLSelectElement;
 
 // Application state
 let currentSVG: string | null = null;
@@ -135,7 +134,6 @@ function setupControls() {
     sortPathsInput.addEventListener('change', autoOptimize);
     gapToleranceInput.addEventListener('change', autoOptimize);
     fixWindingInput.addEventListener('change', autoOptimize);
-    fillRuleInput.addEventListener('change', autoOptimize);
 
     // Fill Strategy Radios
     const fillRadios = document.querySelectorAll('input[name="fillStrategy"]');
@@ -215,7 +213,7 @@ function getOptions(): OptimizeOptions {
         closePaths: fillStrategy === 'close',
         gapTolerance: parseFloat(gapToleranceInput.value),
         fixWinding: fixWindingInput.checked,
-        fillRule: fillRuleInput.value as 'evenodd' | 'nonzero',
+        fillRule: 'evenodd',
     };
 }
 
