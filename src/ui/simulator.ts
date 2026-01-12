@@ -49,9 +49,8 @@ export class Simulator {
     uniform vec2 u_resolution;
     uniform vec2 u_scale;
     uniform vec2 u_offset;
-    uniform float u_maxDist;
 
-    out float v_visible;
+    out float v_cumDist;
     out float v_type;
 
     void main() {
@@ -60,20 +59,24 @@ export class Simulator {
         vec2 clipSpace = (position / u_resolution) * 2.0 - 1.0;
         gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
         
-        // Visibility logic based on progress
-        v_visible = step(a_cumDist, u_maxDist);
+        // Pass to fragment for smooth interpolation
+        v_cumDist = a_cumDist;
         v_type = a_type;
     }`;
 
     private fragmentShaderSource = `#version 300 es
     precision mediump float;
     
-    in float v_visible;
+    in float v_cumDist;
     in float v_type;
+    
+    uniform float u_maxDist;
+
     out vec4 outColor;
 
     void main() {
-        if (v_visible < 0.5) discard;
+        // Smoothly discard pixels past the current distance
+        if (v_cumDist > u_maxDist) discard;
 
         if (v_type > 0.5) {
             // Draw (Pen Down) - Bright Blue/White
