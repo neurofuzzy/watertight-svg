@@ -6,17 +6,41 @@ import type { Path, SVGDocument } from '../geometry/types';
 
 /**
  * Export an SVGDocument back to an SVG string.
+ * Combines all closed paths into a single path element with evenodd fill-rule
+ * to correctly render holes (matching the preview renderer).
  */
 export function exportSVG(doc: SVGDocument): string {
-    const paths = doc.paths.map(pathToSVGPath).join('\n  ');
+    // Separate closed and open paths
+    const closedPaths = doc.paths.filter(p => p.closed && p.points.length >= 3);
+    const openPaths = doc.paths.filter(p => !p.closed || p.points.length < 3);
+
+    const elements: string[] = [];
+
+    // Combine all closed paths into one element with evenodd fill
+    // This is critical for holes/winding to work correctly
+    if (closedPaths.length > 0) {
+        const d = closedPaths.map(path => {
+            const start = path.points[0];
+            const lines = path.points.slice(1).map(p => `L${formatNum(p.x)} ${formatNum(p.y)}`).join(' ');
+            return `M${formatNum(start.x)} ${formatNum(start.y)} ${lines} Z`;
+        }).join(' ');
+
+        const strokeWidth = closedPaths[0]?.meta?.strokeWidth || 1;
+        elements.push(`<path d="${d}" fill="none" stroke="black" stroke-width="${strokeWidth}" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round" />`);
+    }
+
+    // Export open paths individually
+    elements.push(...openPaths.map(pathToSVGPath));
+
+    const paths = elements.join('\n  ');
 
     const viewBox = doc.viewBox || `0 0 ${doc.width} ${doc.height}`;
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" 
      viewBox="${viewBox}" 
-     width="${doc.width}" 
-     height="${doc.height}">
+     width="${doc.width}mm" 
+     height="${doc.height}mm">
   ${paths}
 </svg>`;
 }

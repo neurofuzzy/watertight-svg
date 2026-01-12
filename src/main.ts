@@ -286,7 +286,6 @@ function setUnit(unit: string) {
 
     // Convert generic values
     const margin = parseFloat(paperMarginInput.value);
-    const weight = parseFloat(penWeightInput.value);
     const cWidth = parseFloat(customWidthInput.value);
     const cHeight = parseFloat(customHeightInput.value);
 
@@ -299,8 +298,7 @@ function setUnit(unit: string) {
         paperMarginInput.max = '2.0'; paperMarginInput.step = '0.05';
         paperMarginInput.value = (margin / 25.4).toFixed(3);
 
-        penWeightInput.max = '0.2'; penWeightInput.step = '0.005';
-        penWeightInput.value = (weight / 25.4).toFixed(3);
+        // Pen weight stays in mm (no conversion)
 
         customWidthInput.value = (cWidth / 25.4).toFixed(2);
         customHeightInput.value = (cHeight / 25.4).toFixed(2);
@@ -309,8 +307,7 @@ function setUnit(unit: string) {
         paperMarginInput.max = '50'; paperMarginInput.step = '1';
         paperMarginInput.value = (margin * 25.4).toFixed(1);
 
-        penWeightInput.max = '5.0'; penWeightInput.step = '0.1';
-        penWeightInput.value = (weight * 25.4).toFixed(1);
+        // Pen weight stays in mm (no conversion)
 
         customWidthInput.value = (cWidth * 25.4).toFixed(1);
         customHeightInput.value = (cHeight * 25.4).toFixed(1);
@@ -345,7 +342,7 @@ function updateMarginDisplay() {
 }
 
 function updatePenWeightDisplay() {
-    penWeightValueSpan.textContent = `${parseFloat(penWeightInput.value)}${currentUnit}`;
+    penWeightValueSpan.textContent = `${parseFloat(penWeightInput.value)}mm`;
 }
 
 function toMM(val: number): number {
@@ -353,7 +350,7 @@ function toMM(val: number): number {
 }
 
 function loadSettings() {
-    const saved = localStorage.getItem('watertight_settings');
+    const saved = sessionStorage.getItem('watertight_settings');
     if (saved) {
         try {
             const s = JSON.parse(saved);
@@ -362,10 +359,10 @@ function loadSettings() {
                 // Set inputs to correct limits first implicitly or reset them
                 if (currentUnit === 'in') {
                     paperMarginInput.max = '2.0'; paperMarginInput.step = '0.05';
-                    penWeightInput.max = '0.2'; penWeightInput.step = '0.005';
+                    // Pen weight always mm - no change needed
                 } else {
                     paperMarginInput.max = '50'; paperMarginInput.step = '1';
-                    penWeightInput.max = '5.0'; penWeightInput.step = '0.1';
+                    // Pen weight always mm - no change needed
                 }
             }
             if (s.margin) paperMarginInput.value = s.margin;
@@ -388,7 +385,7 @@ function saveSettings() {
         customWidth: customWidthInput.value,
         customHeight: customHeightInput.value
     };
-    localStorage.setItem('watertight_settings', JSON.stringify(s));
+    sessionStorage.setItem('watertight_settings', JSON.stringify(s));
 }
 
 function getCurrentPaperSizeMM(): { width: number, height: number } {
@@ -437,8 +434,8 @@ function setupButtons() {
 
             // Inject Pen Weight for Export (always pixels/unitless in SVG, but we usually want MM-equivalent)
             // If the SVG size is in MM (which it is for custom/A4), then stroke-width should be in MM.
-            // penWeightInput value is in 'currentUnit'.
-            const penWeightMM = toMM(parseFloat(penWeightInput.value));
+            // Pen weight is always in mm
+            const penWeightMM = parseFloat(penWeightInput.value);
 
             // We need to apply this to all paths
             paths = paths.map(p => ({
@@ -482,7 +479,7 @@ function getOptions(): OptimizeOptions {
         // paperSize is simpler now, we just pass what we have
         paperSize: getCurrentPaperSizeMM(),
         paperMargin: toMM(parseFloat(paperMarginInput.value)),
-        penWeight: toMM(parseFloat(penWeightInput.value)),
+        penWeight: parseFloat(penWeightInput.value), // always mm
     };
 }
 
