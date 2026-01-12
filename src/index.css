@@ -880,3 +880,46 @@ input:checked+.slider:before {
   outline: none;
   border-color: var(--accent-primary);
 }
+
+/* Site Footer */
+.site-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(15, 15, 20, 0.8);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  z-index: 100;
+}
+
+.site-footer a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.site-footer a:hover {
+  color: var(--accent-primary);
+}
+
+.octocat {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.footer-text {
+  opacity: 0.7;
+}
+
+.footer-text a {
+  font-weight: 500;
+}
