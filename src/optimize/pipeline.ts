@@ -77,6 +77,14 @@ export function optimizeDocument(
         }
     }
 
+    // Step 1.5: Remove overdraw AGAIN (Safety Pass)
+    // After splitting, we might have new overlapping segments (e.g. partial overlaps)
+    // capable of being removed now that they share vertices.
+    if (scaledOptions.removeOverdraw) {
+        paths = removeOverdraw(paths, 0.01 * SCALE);
+        paths = pruneDuplicatePoints(paths);
+    }
+
     // Step 2: Merge connected segments (uses tight geometric tolerance)
     if (scaledOptions.mergePaths) {
         // Use scaled tolerance for merging (e.g. 0.1 scaled pixels)
