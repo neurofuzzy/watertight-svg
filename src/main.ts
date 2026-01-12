@@ -3,7 +3,7 @@
  */
 
 import './index.css';
-import { type OptimizeOptions, PAPER_SIZES, type SVGDocument } from './geometry/types';
+import { type OptimizeOptions, type SVGDocument, type Path } from './geometry/types';
 import { parseSVG } from './geometry/parser';
 import { formatStats, type OptimizeResult } from './optimize';
 import { fitToPaper } from './optimize/scale';
@@ -38,12 +38,40 @@ const pageSetupBtn = document.getElementById('pageSetupBtn')!;
 const pageSetupModal = document.getElementById('pageSetupModal')!;
 const closePageSetupBtn = document.getElementById('closePageSetupBtn')!;
 const scaleToFitInput = document.getElementById('scaleToFit') as HTMLInputElement;
+// Scale to Fit defaults to TRUE per user request, update DOM manual override if HTML checked attribute isn't set
+// Scale to Fit defaults to TRUE per user request, update DOM manual override if HTML checked attribute isn't set
+scaleToFitInput.checked = true;
+const rotateOutputInput = document.getElementById('rotateOutput') as HTMLInputElement;
+
 const paperSettingsContainer = document.getElementById('paperSettings')!;
-const paperSizeSelect = document.getElementById('paperSize') as HTMLSelectElement;
+// Removed paperSizeSelect
+const customWidthInput = document.getElementById('customWidth') as HTMLInputElement;
+const customHeightInput = document.getElementById('customHeight') as HTMLInputElement;
+
 const paperMarginInput = document.getElementById('paperMargin') as HTMLInputElement;
 const marginValueSpan = document.getElementById('marginValue')!;
 const penWeightInput = document.getElementById('penWeight') as HTMLInputElement;
 const penWeightValueSpan = document.getElementById('penWeightValue')!;
+
+// Units
+// Units
+const unitToggle = document.getElementById('unitToggle') as HTMLInputElement;
+const unitLabelMM = document.getElementById('unitLabelMM')!;
+const unitLabelIN = document.getElementById('unitLabelIN')!;
+const unitLabels = document.querySelectorAll('.unit-label') as NodeListOf<HTMLElement>;
+
+let currentUnit = 'in'; // Default to Imperial
+
+// Defaults
+const DEFAULT_SETTINGS = {
+    unit: 'in',
+    scaleToFit: true,
+    rotateOutput: false,
+    customWidth: 8.5,
+    customHeight: 11,
+    margin: 0.5,
+    penWeight: 0.01
+};
 
 // Application state
 let currentSVG: string | null = null;
@@ -56,6 +84,9 @@ const panZoom = new PanZoomController();
 
 // Initialize
 function init() {
+    loadSettings();
+    updateUnitLabels();
+
     setupDragAndDrop();
     setupFileInput();
     setupControls();
@@ -155,17 +186,36 @@ function setupControls() {
 
     // Output Settings Listeners
     // Decoupled from autoOptimize as per user request
-    scaleToFitInput.addEventListener('change', updatePageSettings);
-    paperSizeSelect.addEventListener('change', updatePageSettings);
-    paperMarginInput.addEventListener('input', () => {
-        marginValueSpan.textContent = `${paperMarginInput.value}mm`;
+    scaleToFitInput.addEventListener('change', () => {
+        updatePageSettings();
+        saveSettings();
     });
-    paperMarginInput.addEventListener('change', updatePageSettings);
+
+    // Custom Size Inputs
+    customWidthInput.addEventListener('change', () => { updatePageSettings(); saveSettings(); });
+    customHeightInput.addEventListener('change', () => { updatePageSettings(); saveSettings(); });
+
+    // Unit Toggle
+    unitToggle.addEventListener('change', () => {
+        const newUnit = unitToggle.checked ? 'in' : 'mm';
+        setUnit(newUnit);
+    });
+
+    paperMarginInput.addEventListener('input', () => {
+        updateMarginDisplay();
+    });
+    paperMarginInput.addEventListener('change', () => {
+        updatePageSettings();
+        saveSettings();
+    });
 
     penWeightInput.addEventListener('input', () => {
-        penWeightValueSpan.textContent = `${penWeightInput.value}mm`;
+        updatePenWeightDisplay();
     });
-    penWeightInput.addEventListener('change', updatePageSettings);
+    penWeightInput.addEventListener('change', () => {
+        updatePageSettings();
+        saveSettings();
+    });
 
     // Page Setup Modal Controls
     pageSetupBtn.addEventListener('click', () => {
@@ -217,7 +267,6 @@ function updateDependencies() {
         gapToleranceContainer.style.pointerEvents = 'auto';
     }
 
-    // 2.5 Scale Settings
     if (scaleToFitInput.checked) {
         paperSettingsContainer.style.opacity = '1';
         paperSettingsContainer.style.pointerEvents = 'auto';
@@ -238,6 +287,125 @@ function updateDependencies() {
     }
 }
 
+// --- Unit & Persistence Logic ---
+
+function setUnit(unit: string) {
+    if (currentUnit === unit) return;
+
+    // Convert generic values
+    const margin = parseFloat(paperMarginInput.value);
+    const weight = parseFloat(penWeightInput.value);
+    const cWidth = parseFloat(customWidthInput.value);
+    const cHeight = parseFloat(customHeightInput.value);
+
+    // Update state
+    currentUnit = unit;
+
+    // Update Limits & Step
+    if (unit === 'in') {
+        // MM -> IN
+        paperMarginInput.max = '2.0'; paperMarginInput.step = '0.05';
+        paperMarginInput.value = (margin / 25.4).toFixed(3);
+
+        penWeightInput.max = '0.2'; penWeightInput.step = '0.005';
+        penWeightInput.value = (weight / 25.4).toFixed(3);
+
+        customWidthInput.value = (cWidth / 25.4).toFixed(2);
+        customHeightInput.value = (cHeight / 25.4).toFixed(2);
+    } else {
+        // IN -> MM
+        paperMarginInput.max = '50'; paperMarginInput.step = '1';
+        paperMarginInput.value = (margin * 25.4).toFixed(1);
+
+        penWeightInput.max = '5.0'; penWeightInput.step = '0.1';
+        penWeightInput.value = (weight * 25.4).toFixed(1);
+
+        customWidthInput.value = (cWidth * 25.4).toFixed(1);
+        customHeightInput.value = (cHeight * 25.4).toFixed(1);
+    }
+
+    updateUnitLabels();
+    updateMarginDisplay();
+    updatePenWeightDisplay();
+    saveSettings();
+}
+
+function updateUnitLabels() {
+    unitLabels.forEach(el => el.textContent = currentUnit);
+
+    // Update Toggle Visuals
+    unitToggle.checked = (currentUnit === 'in');
+    if (currentUnit === 'in') {
+        unitLabelIN.style.opacity = '1';
+        unitLabelIN.style.fontWeight = 'bold';
+        unitLabelMM.style.opacity = '0.5';
+        unitLabelMM.style.fontWeight = 'normal';
+    } else {
+        unitLabelIN.style.opacity = '0.5';
+        unitLabelIN.style.fontWeight = 'normal';
+        unitLabelMM.style.opacity = '1';
+        unitLabelMM.style.fontWeight = 'bold';
+    }
+}
+
+function updateMarginDisplay() {
+    marginValueSpan.textContent = `${parseFloat(paperMarginInput.value)}${currentUnit}`;
+}
+
+function updatePenWeightDisplay() {
+    penWeightValueSpan.textContent = `${parseFloat(penWeightInput.value)}${currentUnit}`;
+}
+
+function toMM(val: number): number {
+    return currentUnit === 'in' ? val * 25.4 : val;
+}
+
+function loadSettings() {
+    const saved = localStorage.getItem('watertight_settings');
+    if (saved) {
+        try {
+            const s = JSON.parse(saved);
+            if (s.unit) {
+                currentUnit = s.unit;
+                // Set inputs to correct limits first implicitly or reset them
+                if (currentUnit === 'in') {
+                    paperMarginInput.max = '2.0'; paperMarginInput.step = '0.05';
+                    penWeightInput.max = '0.2'; penWeightInput.step = '0.005';
+                } else {
+                    paperMarginInput.max = '50'; paperMarginInput.step = '1';
+                    penWeightInput.max = '5.0'; penWeightInput.step = '0.1';
+                }
+            }
+            if (s.margin) paperMarginInput.value = s.margin;
+            if (s.penWeight) penWeightInput.value = s.penWeight;
+            if (s.scaleToFit !== undefined) scaleToFitInput.checked = s.scaleToFit;
+            if (s.rotateOutput !== undefined) rotateOutputInput.checked = s.rotateOutput;
+            if (s.customWidth) customWidthInput.value = s.customWidth;
+            if (s.customHeight) customHeightInput.value = s.customHeight;
+        } catch (e) { console.error('Failed to load settings', e); }
+    }
+}
+
+function saveSettings() {
+    const s = {
+        unit: currentUnit,
+        margin: paperMarginInput.value,
+        penWeight: penWeightInput.value,
+        scaleToFit: scaleToFitInput.checked,
+        rotateOutput: rotateOutputInput.checked,
+        customWidth: customWidthInput.value,
+        customHeight: customHeightInput.value
+    };
+    localStorage.setItem('watertight_settings', JSON.stringify(s));
+}
+
+function getCurrentPaperSizeMM(): { width: number, height: number } {
+    return {
+        width: toMM(parseFloat(customWidthInput.value)),
+        height: toMM(parseFloat(customHeightInput.value))
+    };
+}
+
 // Get selected fill strategy
 function getFillStrategy(): 'none' | 'close' | 'regions' {
     const checked = document.querySelector('input[name="fillStrategy"]:checked') as HTMLInputElement;
@@ -255,25 +423,37 @@ function setupButtons() {
             let height = currentResult.optimized.height;
             let viewBox = currentResult.optimized.viewBox;
 
+            // Apply Rotation if enabled
+            if (rotateOutputInput.checked) {
+                const rotated = rotatePaths(paths, width, height);
+                paths = rotated.paths;
+                width = rotated.width;
+                height = rotated.height;
+            }
+
             // Apply Scale to Fit if enabled
             if (scaleToFitInput.checked) {
-                const paperSize = PAPER_SIZES[paperSizeSelect.value as keyof typeof PAPER_SIZES] || PAPER_SIZES.A4;
-                const margin = parseFloat(paperMarginInput.value);
-                const { paths: scaledPaths } = fitToPaper(paths, paperSize.width, paperSize.height, margin);
+                const { width: pWidth, height: pHeight } = getCurrentPaperSizeMM();
+                let marginMM = toMM(parseFloat(paperMarginInput.value));
+
+                const { paths: scaledPaths } = fitToPaper(paths, pWidth, pHeight, marginMM);
                 paths = scaledPaths;
-                width = paperSize.width;
-                height = paperSize.height;
+                width = pWidth;
+                height = pHeight;
                 viewBox = `0 0 ${width} ${height}`;
             }
 
-            // Inject Pen Weight for Export
-            const penWeight = parseFloat(penWeightInput.value);
+            // Inject Pen Weight for Export (always pixels/unitless in SVG, but we usually want MM-equivalent)
+            // If the SVG size is in MM (which it is for custom/A4), then stroke-width should be in MM.
+            // penWeightInput value is in 'currentUnit'.
+            const penWeightMM = toMM(parseFloat(penWeightInput.value));
+
             // We need to apply this to all paths
             paths = paths.map(p => ({
                 ...p,
                 meta: {
                     ...p.meta,
-                    strokeWidth: penWeight.toString()
+                    strokeWidth: penWeightMM.toString()
                 }
             }));
 
@@ -307,9 +487,10 @@ function getOptions(): OptimizeOptions {
         fillRule: 'evenodd',
 
         scaleToFit: scaleToFitInput.checked,
-        paperSize: PAPER_SIZES[paperSizeSelect.value as keyof typeof PAPER_SIZES] || PAPER_SIZES.A4,
-        paperMargin: parseFloat(paperMarginInput.value),
-        penWeight: parseFloat(penWeightInput.value),
+        // paperSize is simpler now, we just pass what we have
+        paperSize: getCurrentPaperSizeMM(),
+        paperMargin: toMM(parseFloat(paperMarginInput.value)),
+        penWeight: toMM(parseFloat(penWeightInput.value)),
     };
 }
 
@@ -534,14 +715,23 @@ function initSimulator() {
     let paths = currentResult.optimized.paths;
     let width = 800, height = 600;
 
+    // Apply Rotation if enabled
+    if (rotateOutputInput.checked) {
+        const rotated = rotatePaths(paths, width, height);
+        paths = rotated.paths;
+        width = rotated.width;
+        height = rotated.height;
+    }
+
     // Apply Page Setup Scanning
     if (scaleToFitInput.checked) {
-        const paperSize = PAPER_SIZES[paperSizeSelect.value as keyof typeof PAPER_SIZES] || PAPER_SIZES.A4;
-        const margin = parseFloat(paperMarginInput.value);
-        const { paths: scaledPaths } = fitToPaper(paths, paperSize.width, paperSize.height, margin);
+        const { width: pWidth, height: pHeight } = getCurrentPaperSizeMM();
+        const marginMM = toMM(parseFloat(paperMarginInput.value));
+
+        const { paths: scaledPaths } = fitToPaper(paths, pWidth, pHeight, marginMM);
         paths = scaledPaths;
-        width = paperSize.width;
-        height = paperSize.height;
+        width = pWidth;
+        height = pHeight;
     } else {
         // Use original dimensions
         const viewPort = currentResult.optimized.viewBox || { width: 800, height: 600 };
@@ -638,5 +828,23 @@ simScrubber.addEventListener('input', () => {
     simProgressBar.style.width = `${percent * 100}%`;
     simulator.setProgress(percent);
 });
+// Helper: Rotate paths 90 degrees clockwise
+function rotatePaths(paths: Path[], width: number, height: number): { paths: Path[], width: number, height: number } {
+    // New dimensions (swapped)
+    const newWidth = height;
+    const newHeight = width;
+
+    // Rotate points: x' = height - y, y' = x
+    const newPaths = paths.map(p => ({
+        ...p,
+        points: p.points.map(pt => ({
+            x: height - pt.y,
+            y: pt.x
+        }))
+    }));
+
+    return { paths: newPaths, width: newWidth, height: newHeight };
+}
+
 // Start the app
 init();

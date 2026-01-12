@@ -117,33 +117,57 @@
         <h3>Page Setup</h3>
 
         <div class="control-group">
-          <label>
-            <input type="checkbox" id="scaleToFit" />
-            Scale to Fit Paper
-          </label>
-        </div>
-
-        <div class="control-group" id="paperSettings" style="opacity: 0.5; pointer-events: none;">
-          <label>Paper Size</label>
-          <select id="paperSize">
-            <option value="A4">A4 (210 x 297mm)</option>
-            <option value="A3">A3 (297 x 420mm)</option>
-            <option value="Letter">Letter (216 x 279mm)</option>
-            <option value="12x12">12x12" (305 x 305mm)</option>
-          </select>
-
-          <label>Margin (mm)</label>
-          <div class="slider-group">
-            <input type="range" id="paperMargin" min="0" max="50" value="10" />
-            <span id="marginValue">10mm</span>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <label>
+              <input type="checkbox" id="scaleToFit" />
+              Scale to Fit Paper
+            </label>
+            <label>
+              <input type="checkbox" id="rotateOutput" />
+              Rotate 90°
+            </label>
           </div>
         </div>
 
         <div class="control-group">
-          <label>Pen Weight (mm)</label>
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <label>Units</label>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span id="unitLabelMM" style="font-size: 0.8em; opacity: 0.5;">mm</span>
+              <label class="switch">
+                <input type="checkbox" id="unitToggle" checked>
+                <span class="slider round"></span>
+              </label>
+              <span id="unitLabelIN" style="font-size: 0.8em; font-weight: bold;">in</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group" id="paperSettings" style="opacity: 0.5; pointer-events: none;">
+          <!-- Simplified: No presets, just custom W/H -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+            <div>
+              <label style="font-size: 0.9em;">Width (<span class="unit-label">mm</span>)</label>
+              <input type="number" id="customWidth" value="8.5" step="0.1" style="width: 100%; padding: 4px;" />
+            </div>
+            <div>
+              <label style="font-size: 0.9em;">Height (<span class="unit-label">mm</span>)</label>
+              <input type="number" id="customHeight" value="11" step="0.1" style="width: 100%; padding: 4px;" />
+            </div>
+          </div>
+
+          <label>Margin (<span class="unit-label">mm</span>)</label>
+          <div class="slider-group">
+            <input type="range" id="paperMargin" min="0" max="50" value="10" />
+            <span id="marginValue">10<span class="unit-label">mm</span></span>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label>Pen Weight (<span class="unit-label">mm</span>)</label>
           <div class="slider-group">
             <input type="range" id="penWeight" min="0.1" max="5.0" step="0.1" value="0.3" />
-            <span id="penWeightValue">0.3mm</span>
+            <span id="penWeightValue">0.3<span class="unit-label">mm</span></span>
           </div>
         </div>
 
