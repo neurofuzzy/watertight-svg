@@ -112,11 +112,52 @@
 
           <div class="actions">
             <button type="button" id="optimizeBtn" class="btn-primary">Optimize</button>
+            <button type="button" id="simulateBtn" class="btn-secondary" disabled>Simulate</button>
             <button type="button" id="exportBtn" class="btn-secondary" disabled>Export SVG</button>
           </div>
         </aside>
       </div>
     </main>
+
+    <!-- Simulation Modal -->
+    <div id="simulationModal" class="modal hidden">
+      <div class="modal-content">
+        <button class="modal-close" id="closeSimBtn">&times;</button>
+        <div class="sim-canvas-container">
+          <canvas id="simCanvas"></canvas>
+        </div>
+        <div class="sim-controls">
+          <button id="simPlayPause" class="icon-btn">
+            <!-- Play Icon -->
+            <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            <!-- Pause Icon (hidden by default) -->
+            <svg class="pause-icon hidden" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+            </svg>
+          </button>
+
+          <div class="sim-time" id="simTime">0:00 / 0:00</div>
+
+          <div class="sim-scrubber-container">
+            <input type="range" id="simScrubber" min="0" max="100" value="0" step="0.1" />
+            <div class="sim-progress-bar" id="simProgressBar"></div>
+          </div>
+
+          <div class="sim-speed-container">
+            <span class="speed-label">Speed</span>
+            <select id="simSpeed">
+              <option value="1">1x</option>
+              <option value="5">5x</option>
+              <option value="10" selected>10x</option>
+              <option value="50">50x</option>
+              <option value="100">100x</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>

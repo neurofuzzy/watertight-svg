@@ -10,6 +10,7 @@ import type { WorkerMessage, WorkerResponse } from './worker';
 import { renderPreview } from './ui/preview';
 import { downloadSVG } from './ui/export';
 import { PanZoomController } from './ui/panzoom';
+import { Simulator } from './ui/simulator';
 
 // DOM Elements
 const dropZone = document.getElementById('dropZone')!;
@@ -300,8 +301,9 @@ function handleOptimizationSuccess(result: OptimizeResult) {
     originalStats.textContent = formatStats(currentResult.beforeStats);
     optimizedStats.textContent = formatStats(currentResult.afterStats);
 
-    // Enable export
+    // Enable export & simulate
     exportBtn.removeAttribute('disabled');
+    (document.getElementById('simulateBtn') as HTMLButtonElement).removeAttribute('disabled');
 
     // Log improvement
     const reduction = (
@@ -376,6 +378,150 @@ function setLoading(loading: boolean) {
         document.body.style.cursor = 'default';
     }
 }
+// Simulator Integration
+const simulateBtn = document.getElementById('simulateBtn') as HTMLButtonElement;
+const simulationModal = document.getElementById('simulationModal')!;
+const closeSimBtn = document.getElementById('closeSimBtn')!;
+const simCanvas = document.getElementById('simCanvas') as HTMLCanvasElement;
+const simPlayPauseBtn = document.getElementById('simPlayPause')!;
+const playIcon = simPlayPauseBtn.querySelector('.play-icon')!;
+const pauseIcon = simPlayPauseBtn.querySelector('.pause-icon')!;
+const simTime = document.getElementById('simTime')!;
+const simScrubber = document.getElementById('simScrubber') as HTMLInputElement;
+const simProgressBar = document.getElementById('simProgressBar')!;
+const simSpeedSelect = document.getElementById('simSpeed') as HTMLSelectElement;
 
+let simulator: Simulator | null = null;
+let isUserScrubbing = false;
+
+function initSimulator() {
+    if (!currentResult) return;
+
+    // Show modal
+    simulationModal.classList.remove('hidden');
+
+    // Init Simulator if needed
+    if (!simulator) {
+        try {
+            simulator = new Simulator(simCanvas);
+
+            // Wire up callbacks
+            simulator.onProgress = (percent, timeStr) => {
+                // Update scrubber only if user isn't dragging it
+                if (!isUserScrubbing) {
+                    simScrubber.value = (percent * 100).toString();
+                }
+                // Update progress bar visual
+                simProgressBar.style.width = `${percent * 100}%`;
+                // Update time display
+                simTime.textContent = timeStr;
+            };
+
+            simulator.onComplete = () => {
+                updatePlayPauseIcon(false);
+            };
+
+            // Resize observer to handle modal transitions
+            const observer = new ResizeObserver(() => {
+                simulator?.resize();
+            });
+            observer.observe(simulationModal.querySelector('.sim-canvas-container')!);
+
+        } catch (e) {
+            console.error('Failed to init simulator:', e);
+            alert('WebGL not supported or initialization failed');
+            simulationModal.classList.add('hidden');
+            return;
+        }
+    }
+
+    // Load data
+    const viewPort = currentResult.optimized.viewBox || { width: 800, height: 600 };
+    // Handle viewBox as string or object
+    let width = 800, height = 600;
+    if (typeof viewPort === 'string') {
+        const parts = viewPort.split(' ').map(parseFloat);
+        if (parts.length === 4) {
+            width = parts[2];
+            height = parts[3];
+        }
+    } else {
+        width = viewPort.width;
+        height = viewPort.height;
+    }
+
+    simulator.setData(currentResult.optimized.paths, { width, height });
+
+    // Reset controls
+    simScrubber.value = "0";
+    simProgressBar.style.width = "0%";
+    simSpeedSelect.value = "10";
+    simulator.setSpeed(10);
+
+    // Auto-play
+    simulator.play();
+    updatePlayPauseIcon(true);
+}
+
+function updatePlayPauseIcon(isPlaying: boolean) {
+    if (isPlaying) {
+        playIcon.classList.add('hidden');
+        pauseIcon.classList.remove('hidden');
+    } else {
+        playIcon.classList.remove('hidden');
+        pauseIcon.classList.add('hidden');
+    }
+}
+
+// Event Listeners for Simulator
+simulateBtn.addEventListener('click', initSimulator);
+
+closeSimBtn.addEventListener('click', () => {
+    simulationModal.classList.add('hidden');
+    if (simulator) {
+        simulator.pause();
+    }
+});
+
+simPlayPauseBtn.addEventListener('click', () => {
+    if (!simulator) return;
+    // Toggle
+    // We can't easily check isPlaying from outside without exposing it, 
+    // so we'll track implied state or check icon
+    const isPlaying = playIcon.classList.contains('hidden');
+
+    if (isPlaying) {
+        simulator.pause();
+        updatePlayPauseIcon(false);
+    } else {
+        simulator.play();
+        updatePlayPauseIcon(true);
+    }
+});
+
+simSpeedSelect.addEventListener('change', () => {
+    if (!simulator) return;
+    simulator.setSpeed(parseFloat(simSpeedSelect.value));
+});
+
+simScrubber.addEventListener('mousedown', () => { isUserScrubbing = true; });
+simScrubber.addEventListener('touchstart', () => { isUserScrubbing = true; }); // Mobile
+
+const handleScrubEnd = () => {
+    if (!simulator) return;
+    isUserScrubbing = false;
+    // Commit the value
+    const percent = parseFloat(simScrubber.value) / 100;
+    simulator.setProgress(percent);
+};
+
+simScrubber.addEventListener('mouseup', handleScrubEnd);
+simScrubber.addEventListener('touchend', handleScrubEnd);
+simScrubber.addEventListener('input', () => {
+    if (!simulator) return;
+    const percent = parseFloat(simScrubber.value) / 100;
+    simProgressBar.style.width = `${percent * 100}%`;
+    simulator.setProgress(percent);
+});
 // Start the app
 init();
