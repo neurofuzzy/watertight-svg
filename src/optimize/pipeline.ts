@@ -4,7 +4,7 @@
 
 import type { Path, OptimizeOptions, PathStats, SVGDocument } from '../geometry/types';
 import { parseSVG } from '../geometry/parser';
-import { pathLength, scalePath, pruneDuplicatePoints } from '../geometry/math';
+import { pathLength, scalePath, pruneDuplicatePoints, removeTinyPaths, mergeColinearPoints } from '../geometry/math';
 import { mergePaths } from './merge';
 import { removeOverdraw } from './overdraw';
 import { sortPathsWithTwoOpt, calculateTravelDistance } from './sort';
@@ -104,6 +104,12 @@ export function optimizeDocument(
     if (scaledOptions.mergePaths) {
         paths = mergePaths(paths); // Uses default tolerance
     }
+
+    // Step 2.5: Cleanup after merge
+    // Remove tiny paths and merge colinear segments for cleaner geometry
+    const MIN_PATH_LENGTH = 0.1 * SCALE; // 0.1 pixel minimum
+    paths = removeTinyPaths(paths, MIN_PATH_LENGTH);
+    paths = mergeColinearPoints(paths, 0.01 * SCALE);
 
     // Step 3: Fill Strategy & Step 4: Fix Winding
     // We handle these together to optimize performance (only fixing winding on regions)

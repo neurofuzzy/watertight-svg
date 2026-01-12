@@ -423,3 +423,67 @@ export function pruneDuplicatePoints(paths: Path[], tolerance: number = 1e-5): P
         return { ...path, points: newPoints };
     });
 }
+
+/**
+ * Remove paths that have length below the minimum threshold.
+ * Also removes single-point and degenerate paths.
+ */
+export function removeTinyPaths(paths: Path[], minLength: number = 0.01): Path[] {
+    return paths.filter(path => {
+        // Remove single-point paths
+        if (path.points.length < 2) return false;
+
+        // Calculate total length
+        const len = pathLength(path);
+        return len >= minLength;
+    });
+}
+
+/**
+ * Merge colinear adjacent segments within paths.
+ * This simplifies paths by removing unnecessary intermediate points on straight lines.
+ */
+export function mergeColinearPoints(paths: Path[], tolerance: number = 0.001): Path[] {
+    return paths.map(path => {
+        if (path.points.length < 3) return path;
+
+        const newPoints: Point[] = [path.points[0]];
+
+        for (let i = 1; i < path.points.length - 1; i++) {
+            const prev = newPoints[newPoints.length - 1];
+            const curr = path.points[i];
+            const next = path.points[i + 1];
+
+            // Check if prev, curr, next are colinear
+            if (!areColinear(prev, curr, next, tolerance)) {
+                newPoints.push(curr);
+            }
+            // If colinear, skip the intermediate point
+        }
+
+        // Always add the last point
+        newPoints.push(path.points[path.points.length - 1]);
+
+        return { ...path, points: newPoints };
+    });
+}
+
+/**
+ * Check if three points are colinear (on the same line).
+ */
+export function areColinear(a: Point, b: Point, c: Point, tolerance: number = 0.001): boolean {
+    // Calculate cross product (area of triangle formed by the three points)
+    // If area is ~0, points are colinear
+    const area = Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
+
+    // Normalize by the longest side to make tolerance scale-independent
+    const d1 = distance(a, b);
+    const d2 = distance(b, c);
+    const d3 = distance(a, c);
+    const maxLen = Math.max(d1, d2, d3);
+
+    if (maxLen < tolerance) return true; // Degenerate case
+
+    return (area / maxLen) < tolerance;
+}
+
