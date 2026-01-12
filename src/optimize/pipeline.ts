@@ -58,23 +58,31 @@ export function optimizeDocument(
 
 
 
-    // Step 0.5: Split segments at all intersection points (NEW)
-    // This ensures no crossing segments - all intersections become proper vertices
-    if (scaledOptions.splitIntersections) {
-        const SPLIT_TOLERANCE = 1.0 * SCALE; // 1 pixel tolerance for intersection snapping
-        paths = splitPathsAtIntersections(paths, SPLIT_TOLERANCE) as Path[];
-    }
-
     // Step 1: Remove overdraw (uses tight geometric tolerance)
+    // We do this BEFORE splitting intersections so we can identify duplicate paths 
+    // while their topology is still intact.
     if (scaledOptions.removeOverdraw) {
-        paths = removeOverdraw(paths); // Uses default tolerance
+        paths = removeOverdraw(paths, 0.01 * SCALE); // Scaled tolerance
         // Cleanup: Remove duplicate points that might have been created
         paths = pruneDuplicatePoints(paths);
     }
 
+    // Step 0.5: Split segments at all intersection points (NEW)
+    // This ensures no crossing segments - all intersections become proper vertices
+    if (scaledOptions.splitIntersections) {
+        // Only run this if we have paths left
+        if (paths.length > 0) {
+            const SPLIT_TOLERANCE = 1.0 * SCALE; // 1 pixel tolerance for intersection snapping
+            paths = splitPathsAtIntersections(paths, SPLIT_TOLERANCE) as Path[];
+        }
+    }
+
     // Step 2: Merge connected segments (uses tight geometric tolerance)
     if (scaledOptions.mergePaths) {
-        paths = mergePaths(paths); // Uses default tolerance
+        // Use scaled tolerance for merging (e.g. 0.1 scaled pixels)
+        // This ensures we don't fail to merge slightly drifted points
+        const MERGE_TOLERANCE = 0.1 * SCALE;
+        paths = mergePaths(paths, MERGE_TOLERANCE);
     }
 
     // Step 2.5: Cleanup after merge
