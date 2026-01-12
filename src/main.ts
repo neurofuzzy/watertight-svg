@@ -390,6 +390,8 @@ const simTime = document.getElementById('simTime')!;
 const simScrubber = document.getElementById('simScrubber') as HTMLInputElement;
 const simProgressBar = document.getElementById('simProgressBar')!;
 const simSpeedSelect = document.getElementById('simSpeed') as HTMLSelectElement;
+const simBlotsCheckbox = document.getElementById('simBlots') as HTMLInputElement;
+const simTravelCheckbox = document.getElementById('simTravel') as HTMLInputElement;
 
 let simulator: Simulator | null = null;
 let isUserScrubbing = false;
@@ -457,6 +459,19 @@ function initSimulator() {
     simProgressBar.style.width = "0%";
     simSpeedSelect.value = "10";
     simulator.setSpeed(10);
+
+    // Wire up blots toggle
+    simBlotsCheckbox.addEventListener('change', () => {
+        simulator?.setBlots(simBlotsCheckbox.checked);
+    });
+    // Wire up travel toggle
+    simTravelCheckbox.addEventListener('change', () => {
+        simulator?.setTravel(simTravelCheckbox.checked);
+    });
+
+    // Initial state
+    simulator.setBlots(simBlotsCheckbox.checked);
+    simulator.setTravel(simTravelCheckbox.checked);
 
     // Auto-play
     simulator.play();

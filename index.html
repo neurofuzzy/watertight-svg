@@ -77,11 +77,11 @@
                 None
               </label>
               <label class="radio-label">
-                <input type="radio" name="fillStrategy" value="close" checked />
+                <input type="radio" name="fillStrategy" value="close" />
                 Close Ends
               </label>
               <label class="radio-label">
-                <input type="radio" name="fillStrategy" value="regions" />
+                <input type="radio" name="fillStrategy" value="regions" checked />
                 Find Regions
               </label>
             </div>
@@ -154,6 +154,14 @@
               <option value="50">50x</option>
               <option value="100">100x</option>
             </select>
+            <div class="blot-toggle">
+              <input type="checkbox" id="simBlots" />
+              <label for="simBlots">Blots</label>
+            </div>
+            <div class="blot-toggle">
+              <input type="checkbox" id="simTravel" checked />
+              <label for="simTravel">Travel</label>
+            </div>
           </div>
         </div>
       </div>

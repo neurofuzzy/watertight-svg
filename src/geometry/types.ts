@@ -105,7 +105,7 @@ export const DEFAULT_OPTIONS: OptimizeOptions = {
     removeOverdraw: true,
     splitIntersections: true,
     sortPaths: true,
-    findRegions: false,
+    findRegions: true,
     closePaths: true,
     gapTolerance: 2,
     fixWinding: true,

@@ -24,6 +24,12 @@ export class Simulator {
     public onProgress: (percent: number, timeStr: string) => void = () => { };
     public onComplete: () => void = () => { };
 
+    // Blots Data
+    private blotBuffer: WebGLBuffer;
+    private blotCount: number = 0;
+    private showBlots: boolean = false;
+    private showTravel: boolean = true;
+
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
         const gl = canvas.getContext('webgl2', { alpha: false, antialias: true });
@@ -33,6 +39,7 @@ export class Simulator {
         // Initialize Shaders
         this.program = this.createProgram(this.vertexShaderSource, this.fragmentShaderSource);
         this.vertexBuffer = gl.createBuffer()!;
+        this.blotBuffer = gl.createBuffer()!;
 
         // Setup GL state
         gl.viewport(0, 0, canvas.width, canvas.height);
@@ -49,6 +56,8 @@ export class Simulator {
     uniform vec2 u_resolution;
     uniform vec2 u_scale;
     uniform vec2 u_offset;
+    uniform bool u_isPoints;
+    uniform float u_pointSize;
 
     out float v_cumDist;
     out float v_type;
@@ -59,6 +68,10 @@ export class Simulator {
         vec2 clipSpace = (position / u_resolution) * 2.0 - 1.0;
         gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
         
+        if (u_isPoints) {
+            gl_PointSize = u_pointSize;
+        }
+
         // Pass to fragment for smooth interpolation
         v_cumDist = a_cumDist;
         v_type = a_type;
@@ -71,6 +84,8 @@ export class Simulator {
     in float v_type;
     
     uniform float u_maxDist;
+    uniform bool u_isPoints;
+    uniform bool u_showTravel;
 
     out vec4 outColor;
 
@@ -78,15 +93,29 @@ export class Simulator {
         // Smoothly discard pixels past the current distance
         if (v_cumDist > u_maxDist) discard;
 
+        if (u_isPoints) {
+            // Circle shape for points
+            vec2 cxy = 2.0 * gl_PointCoord - 1.0;
+            float r = dot(cxy, cxy);
+            if (r > 1.0) discard;
+            
+            // Blot color (Slightly lighter blue)
+            outColor = vec4(0.6, 0.8, 1.0, 0.9);
+            return;
+        }
+
         if (v_type > 0.5) {
             // Draw (Pen Down) - Bright Blue/White
             outColor = vec4(0.4, 0.6, 1.0, 1.0);
         } else {
+            // Travel (Pen Up)
+            if (!u_showTravel) discard;
             // Travel (Pen Up) - Dim Red, lower opacity
             outColor = vec4(1.0, 0.2, 0.4, 0.3);
         }
     }`;
 
+    // ... createProgram and compileShader methods stay the same ...
     private createProgram(vsSource: string, fsSource: string): WebGLProgram {
         const gl = this.gl;
         const vs = this.compileShader(gl.VERTEX_SHADER, vsSource);
@@ -112,48 +141,57 @@ export class Simulator {
         return shader;
     }
 
-    /**
-     * Load paths into WebGL buffers
-     */
     public setData(paths: Path[], bounds: { width: number, height: number }) {
-        // 1. Flatten paths into vertices with cumulative distance
-        // Format: [x, y, cumDist, type, x, y, cumDist, type, ...]
-        // We use Line Lists for rendering (start-end pairs)
-
+        // 1. Line Data
         let totalPoints = 0;
         // Calculate size first
         for (const path of paths) {
-            totalPoints += (path.points.length - 1) * 2; // Each segment is 2 vertices
-            // Add travel move from previous end to current start? 
-            // Better: Just treat all paths as a sequence, and insert "travel" segments between them
+            if (path.points.length < 2) continue;
+            totalPoints += (path.points.length - 1) * 2;
+            if (path.closed) totalPoints += 2; // Closing segment
         }
-        // Add space for travel moves
-        totalPoints += (paths.length - 1) * 2;
+        totalPoints += Math.max(0, (paths.length - 1) * 2); // Travel moves
 
-        const data = new Float32Array(totalPoints * 4);
-        let offset = 0;
+        const lineData = new Float32Array(totalPoints * 4);
+
+        // 2. Blot Data (Start and End of every path)
+        const blotData = new Float32Array(paths.length * 2 * 4);
+
+        let lineOffset = 0;
+        let blotOffset = 0;
         let cumDist = 0;
         let lastPoint: Point | null = null;
 
         for (const path of paths) {
-            // Travel from last point (if exists)
+            if (path.points.length < 2) continue;
+
+            const pathStart = path.points[0];
+            const pathEnd = path.points[path.points.length - 1];
+
+            // Travel from last point
             if (lastPoint) {
-                const dist = Math.hypot(path.points[0].x - lastPoint.x, path.points[0].y - lastPoint.y);
+                const dist = Math.hypot(pathStart.x - lastPoint.x, pathStart.y - lastPoint.y);
 
                 // Start of travel
-                data[offset++] = lastPoint.x;
-                data[offset++] = lastPoint.y;
-                data[offset++] = cumDist;
-                data[offset++] = 0; // Travel
+                lineData[lineOffset++] = lastPoint.x;
+                lineData[lineOffset++] = lastPoint.y;
+                lineData[lineOffset++] = cumDist;
+                lineData[lineOffset++] = 0;
 
                 cumDist += dist;
 
                 // End of travel
-                data[offset++] = path.points[0].x;
-                data[offset++] = path.points[0].y;
-                data[offset++] = cumDist;
-                data[offset++] = 0; // Travel
+                lineData[lineOffset++] = pathStart.x;
+                lineData[lineOffset++] = pathStart.y;
+                lineData[lineOffset++] = cumDist;
+                lineData[lineOffset++] = 0;
             }
+
+            // Record Pen Down Blot
+            blotData[blotOffset++] = pathStart.x;
+            blotData[blotOffset++] = pathStart.y;
+            blotData[blotOffset++] = cumDist; // Appears right when pen lands
+            blotData[blotOffset++] = 1; // Type doesn't really matter for blots, but 1 matches "draw"
 
             // Draw segments
             for (let i = 0; i < path.points.length - 1; i++) {
@@ -162,59 +200,86 @@ export class Simulator {
                 const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
 
                 // Start vertex
-                data[offset++] = p1.x;
-                data[offset++] = p1.y;
-                data[offset++] = cumDist;
-                data[offset++] = 1; // Draw
+                lineData[lineOffset++] = p1.x;
+                lineData[lineOffset++] = p1.y;
+                lineData[lineOffset++] = cumDist;
+                lineData[lineOffset++] = 1;
 
                 cumDist += dist;
 
                 // End vertex
-                data[offset++] = p2.x;
-                data[offset++] = p2.y;
-                data[offset++] = cumDist;
-                data[offset++] = 1; // Draw
+                lineData[lineOffset++] = p2.x;
+                lineData[lineOffset++] = p2.y;
+                lineData[lineOffset++] = cumDist;
+                lineData[lineOffset++] = 1;
             }
 
-            lastPoint = path.points[path.points.length - 1];
+            // Draw Closing Segment if closed
+            if (path.closed) {
+                const p1 = pathEnd;
+                const p2 = pathStart;
+                const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+                // Start vertex
+                lineData[lineOffset++] = p1.x;
+                lineData[lineOffset++] = p1.y;
+                lineData[lineOffset++] = cumDist;
+                lineData[lineOffset++] = 1;
+
+                cumDist += dist;
+
+                // End vertex
+                lineData[lineOffset++] = p2.x;
+                lineData[lineOffset++] = p2.y;
+                lineData[lineOffset++] = cumDist;
+                lineData[lineOffset++] = 1;
+
+                lastPoint = pathStart;
+            } else {
+                lastPoint = pathEnd;
+            }
+
+            // Record Pen Up Blot (at actual end position)
+            blotData[blotOffset++] = lastPoint.x;
+            blotData[blotOffset++] = lastPoint.y;
+            blotData[blotOffset++] = cumDist; // Appears right when pen lifts
+            blotData[blotOffset++] = 1;
         }
 
         this.totalDistance = cumDist;
-        this.vertexCount = offset / 4;
+        this.vertexCount = lineOffset / 4;
+        this.blotCount = blotOffset / 4;
 
-        // Upload to GPU
+        // Upload Lines
         const gl = this.gl;
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, lineData, gl.STATIC_DRAW);
 
-        // Setup Attributes
-        const stride = 4 * 4;
-        const posLoc = gl.getAttribLocation(this.program, 'a_position');
-        const distLoc = gl.getAttribLocation(this.program, 'a_cumDist');
-        const typeLoc = gl.getAttribLocation(this.program, 'a_type');
+        // Upload Blots
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.blotBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, blotData, gl.STATIC_DRAW);
 
-        gl.enableVertexAttribArray(posLoc);
-        gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, stride, 0);
-
-        gl.enableVertexAttribArray(distLoc);
-        gl.vertexAttribPointer(distLoc, 1, gl.FLOAT, false, stride, 8);
-
-        gl.enableVertexAttribArray(typeLoc);
-        gl.vertexAttribPointer(typeLoc, 1, gl.FLOAT, false, stride, 12);
-
-        // Fit view
         this.fitView(bounds);
-
-        // Reset state
         this.progress = 0;
         this.draw();
     }
 
+    public setBlots(enabled: boolean) {
+        this.showBlots = enabled;
+        this.draw();
+    }
+
+    public setTravel(enabled: boolean) {
+        this.showTravel = enabled;
+        this.draw();
+    }
+
+    // ... fitView, resize, play, pause, setSpeed, setProgress, animate ... (keep existing)
+    // Need to preserve these due to partial replacement limit
     private fitView(bounds: { width: number, height: number }) {
         const gl = this.gl;
         gl.useProgram(this.program);
 
-        // Match canvas resolution
         this.canvas.width = this.canvas.clientWidth;
         this.canvas.height = this.canvas.clientHeight;
         gl.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -222,13 +287,11 @@ export class Simulator {
         const uRes = gl.getUniformLocation(this.program, 'u_resolution');
         gl.uniform2f(uRes, this.canvas.width, this.canvas.height);
 
-        // Calculate scale to fit with padding
         const padding = 20;
         const scaleX = (this.canvas.width - padding * 2) / bounds.width;
         const scaleY = (this.canvas.height - padding * 2) / bounds.height;
         const scale = Math.min(scaleX, scaleY);
 
-        // Center content
         const offsetX = (this.canvas.width - bounds.width * scale) / 2;
         const offsetY = (this.canvas.height - bounds.height * scale) / 2;
 
@@ -241,9 +304,6 @@ export class Simulator {
 
     public resize() {
         if (!this.gl) return;
-        // Re-fit view (assuming bounds stored or passed again - simplified for now)
-        // For accurate resize we'd need to store the bounds. 
-        // We'll just update viewport resolution to match display size
         const gl = this.gl;
         const width = this.canvas.clientWidth;
         const height = this.canvas.clientHeight;
@@ -254,8 +314,6 @@ export class Simulator {
             gl.viewport(0, 0, width, height);
             gl.useProgram(this.program);
             gl.uniform2f(gl.getUniformLocation(this.program, 'u_resolution')!, width, height);
-
-            // Re-render
             this.draw();
         }
     }
@@ -276,8 +334,6 @@ export class Simulator {
     }
 
     public setSpeed(multiplier: number) {
-        // Base speed = totalDistance / 30 seconds (heuristic)
-        // or just explicit units/sec. Let's say 100 units/sec is 1x
         const baseSpeed = 100;
         this.speed = baseSpeed * multiplier;
     }
@@ -294,10 +350,9 @@ export class Simulator {
         if (!this.isPlaying) return;
 
         const now = performance.now();
-        const dt = (now - this.lastFrameTime) / 1000; // seconds
+        const dt = (now - this.lastFrameTime) / 1000;
         this.lastFrameTime = now;
 
-        // Advance progress based on speed
         const distTraveled = this.speed * dt;
         const percentDelta = distTraveled / this.totalDistance;
 
@@ -311,10 +366,7 @@ export class Simulator {
 
         this.draw();
         this.updateTimeDisplay();
-
-        // Callback for UI slider update
         this.onProgress(this.progress, this.formatTime(this.progress));
-
         this.animationFrameId = requestAnimationFrame(this.animate);
     }
 
@@ -326,10 +378,40 @@ export class Simulator {
 
         const currentMaxDist = this.totalDistance * this.progress;
         const uMaxDist = gl.getUniformLocation(this.program, 'u_maxDist');
-        gl.uniform1f(uMaxDist, currentMaxDist);
+        const uIsPoints = gl.getUniformLocation(this.program, 'u_isPoints');
+        const uPointSize = gl.getUniformLocation(this.program, 'u_pointSize');
+        const uShowTravel = gl.getUniformLocation(this.program, 'u_showTravel');
 
-        // Draw lines
+        gl.uniform1f(uMaxDist, currentMaxDist);
+        gl.uniform1i(uShowTravel, this.showTravel ? 1 : 0);
+
+        const stride = 4 * 4;
+        const posLoc = gl.getAttribLocation(this.program, 'a_position');
+        const distLoc = gl.getAttribLocation(this.program, 'a_cumDist');
+        const typeLoc = gl.getAttribLocation(this.program, 'a_type');
+
+        gl.enableVertexAttribArray(posLoc);
+        gl.enableVertexAttribArray(distLoc);
+        gl.enableVertexAttribArray(typeLoc);
+
+        // 1. Draw Lines
+        gl.uniform1i(uIsPoints, 0); // False
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+        gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, stride, 0);
+        gl.vertexAttribPointer(distLoc, 1, gl.FLOAT, false, stride, 8);
+        gl.vertexAttribPointer(typeLoc, 1, gl.FLOAT, false, stride, 12);
         gl.drawArrays(gl.LINES, 0, this.vertexCount);
+
+        // 2. Draw Blots (if enabled)
+        if (this.showBlots) {
+            gl.uniform1i(uIsPoints, 1); // True
+            gl.uniform1f(uPointSize, 2.5); // Blot size (75% of 6.0)
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.blotBuffer);
+            gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, stride, 0);
+            gl.vertexAttribPointer(distLoc, 1, gl.FLOAT, false, stride, 8);
+            gl.vertexAttribPointer(typeLoc, 1, gl.FLOAT, false, stride, 12);
+            gl.drawArrays(gl.POINTS, 0, this.blotCount);
+        }
     }
 
     private updateTimeDisplay() {
@@ -337,8 +419,7 @@ export class Simulator {
     }
 
     private formatTime(progress: number): string {
-        const totalSeconds = this.totalDistance / this.speed; // This varies with speed slider
-        // Better: Total estimated time at current speed
+        const totalSeconds = this.totalDistance > 0 ? this.totalDistance / this.speed : 0;
         const currentSeconds = totalSeconds * progress;
         return `${this.formatSeconds(currentSeconds)} / ${this.formatSeconds(totalSeconds)}`;
     }
