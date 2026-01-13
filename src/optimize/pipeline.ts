@@ -57,6 +57,19 @@ export function optimizeDocument(
     const scaledOptions = { ...options };
     scaledOptions.gapTolerance *= SCALE;
 
+    // "Plotter Mode" Optimization:
+    // If we are Merging segments but NOT using any fill strategy (None),
+    // we assume the user wants clean, continuous lines for plotting/cutting.
+    const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
+    if (isPlotterMode) {
+        // A) Don't split intersections (keep long continuous lines)
+        scaledOptions.splitIntersections = false;
+
+        // D) Always sort paths (optimize for pen-up travel)
+        // Even if the user didn't check it, this is crucial for plotter performance
+        scaledOptions.sortPaths = true;
+    }
+
 
 
     // Step 1: Remove overdraw (uses tight geometric tolerance)

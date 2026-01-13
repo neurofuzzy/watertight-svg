@@ -548,8 +548,13 @@ function handleOptimizationSuccess(result: OptimizeResult) {
         drawColor: '#a0a0b0',
     });
 
+    // Check for Plotter Mode (Merge + None) to disable fill preview
+    const options = getOptions();
+    const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
+
     renderPreview(optimizedPreview, currentResult.optimized, {
         showTravel: true,
+        ...(isPlotterMode && { fillColor: 'none' })
     });
 
     // Attach Pan/Zoom controller
