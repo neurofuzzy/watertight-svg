@@ -923,3 +923,52 @@ input:checked+.slider:before {
 .footer-text a {
   font-weight: 500;
 }
+/* Preset Selector */
+.preset-selector {
+  display: flex;
+  background: var(--bg-elevated);
+  padding: 4px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  margin-bottom: var(--space-md);
+}
+
+.preset-label {
+  flex: 1;
+  cursor: pointer;
+  position: relative;
+}
+
+.preset-label input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.preset-bubble {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: all var(--duration-fast) var(--ease-out);
+  user-select: none;
+}
+
+.preset-label input[type="radio"]:checked + .preset-bubble {
+  background: var(--accent-primary);
+  color: white;
+  box-shadow: var(--shadow-sm);
+}
+
+.preset-label:hover .preset-bubble {
+  color: var(--text-primary);
+}
+
+.preset-label input[type="radio"]:checked:hover + .preset-bubble {
+  color: white;
+}

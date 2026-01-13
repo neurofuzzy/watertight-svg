@@ -1,7 +1,7 @@
 {
   "name": "watertight-svg",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "A high-performance geometric optimizer for SVG paths, designed for plotters, laser cutters, and CNC machines.",
   "keywords": [
     "svg",

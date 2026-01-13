@@ -164,16 +164,95 @@ function setupControls() {
     };
 
 
-    mergePathsInput.addEventListener('change', autoOptimize);
-    removeOverdrawInput.addEventListener('change', autoOptimize);
-    sortPathsInput.addEventListener('change', autoOptimize);
-    gapToleranceInput.addEventListener('change', autoOptimize);
-    fixWindingInput.addEventListener('change', autoOptimize);
+
+    // Preset Radios
+    const presetRadios = document.querySelectorAll('input[name="preset"]') as NodeListOf<HTMLInputElement>;
+
+    // Define Presets
+    const applyPreset = (preset: 'cutter' | 'plotter') => {
+        if (preset === 'cutter') {
+            // Cutter defaults: All Optimizations ON, Regions Fill
+            removeOverdrawInput.checked = true;
+            mergePathsInput.checked = true;
+
+            // Set Fill to Regions
+            const regionsRadio = document.querySelector('input[name="fillStrategy"][value="regions"]') as HTMLInputElement;
+            if (regionsRadio) regionsRadio.checked = true;
+
+            fixWindingInput.checked = true;
+            sortPathsInput.checked = true;
+        } else if (preset === 'plotter') {
+            // Plotter defaults: Overdraw+Merge ON, Fill NONE, Winding OFF, Sort ON
+            removeOverdrawInput.checked = true;
+            mergePathsInput.checked = true;
+
+            // Set Fill to None
+            const noneRadio = document.querySelector('input[name="fillStrategy"][value="none"]') as HTMLInputElement;
+            if (noneRadio) noneRadio.checked = true;
+
+            fixWindingInput.checked = false; // Disabled naturally by logic, but explicit check off
+            sortPathsInput.checked = true;
+        }
+
+        // Trigger updates
+        autoOptimize();
+    };
+
+    // Check which preset matches current settings
+    const checkPresets = () => {
+        const isOverdraw = removeOverdrawInput.checked;
+        const isMerge = mergePathsInput.checked;
+        const fillStrategy = getFillStrategy();
+        const isWinding = fixWindingInput.checked; // Note: might be disabled/unchecked in plotter mode
+        const isSort = sortPathsInput.checked;
+
+        // Cutter Definition
+        const isCutter = isOverdraw && isMerge && fillStrategy === 'regions' && isWinding && isSort;
+
+        // Plotter Definition
+        // Note: fixWinding input is unchecked in plotter mode. 
+        // We strictly check the inputs state here.
+        const isPlotter = isOverdraw && isMerge && fillStrategy === 'none' && !isWinding && isSort; // Plotter mode forces Sort internally, but UI should reflect desired state
+
+        // Update Radios
+        if (isCutter) {
+            const r = document.querySelector('input[name="preset"][value="cutter"]') as HTMLInputElement;
+            if (r) r.checked = true;
+        } else if (isPlotter) {
+            const r = document.querySelector('input[name="preset"][value="plotter"]') as HTMLInputElement;
+            if (r) r.checked = true;
+        } else {
+            const r = document.querySelector('input[name="preset"][value="custom"]') as HTMLInputElement;
+            if (r) r.checked = true;
+        }
+    };
+
+    // Preset Listener
+    presetRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const val = (e.target as HTMLInputElement).value;
+            if (val !== 'custom') {
+                applyPreset(val as 'cutter' | 'plotter');
+            }
+        });
+    });
+
+    // Modified listener wrapper to sync presets
+    const onSettingChange = () => {
+        autoOptimize();
+        checkPresets();
+    };
+
+    mergePathsInput.addEventListener('change', onSettingChange);
+    removeOverdrawInput.addEventListener('change', onSettingChange);
+    sortPathsInput.addEventListener('change', onSettingChange);
+    gapToleranceInput.addEventListener('change', onSettingChange);
+    fixWindingInput.addEventListener('change', onSettingChange);
 
     // Fill Strategy Radios
     const fillRadios = document.querySelectorAll('input[name="fillStrategy"]');
     fillRadios.forEach(radio => {
-        radio.addEventListener('change', autoOptimize);
+        radio.addEventListener('change', onSettingChange);
     });
 
     // Output Settings Listeners
