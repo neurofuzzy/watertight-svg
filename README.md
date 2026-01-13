@@ -16,8 +16,13 @@ Watertight SVG takes messy, disconnected, or overdrawn vector graphics and turns
 - **Split at Intersections**: Explicitly creates vertices where paths cross, ensuring correct topology for filling and region finding.
 - **Colinear Simplification**: Merges adjacent segments that lie on the same line, reducing file size and machine instruction count.
 
+### 🎛️ Workflow Presets
+- **Cutter Mode**: Optimized for vinyl/laser cutters. Handles overlapping shapes, winding errors, and region detection.
+- **Plotter Mode**: Optimized for pen plotters. Preserves long strokes, disables filling, and maximizes merge efficiency.
+- **Custom**: Fully manual control over all optimization parameters.
+
 ### 🧠 Smart Optimization
-- **Path Sorting (TSP)**: Uses a Traveling Salesperson Problem (TSP) approximation (2-Opt) to minimize air travel distance between cuts/draws.
+- **Path Sorting (TSP)**: Uses a Traveling Salesperson Problem (TSP) approximation (2-Opt) with **Deep Reversal** to minimize air travel distance. It reverses both the order and direction of paths to ensure seamless drawing flows.
 - **Region Finding**: Identifies enclosed regions from unclosed stroke data—perfect for converting "line art" into "filled shapes" for hatching or vinyl cutting.
 - **Winding Correction**: Automatically fixes path direction (clockwise/counter-clockwise) for correct "fill" interpretation by browsers and machines.
 
@@ -30,6 +35,7 @@ Watertight SVG takes messy, disconnected, or overdrawn vector graphics and turns
 ### 📐 Page Setup & Export
 - **Custom Units**: Switch seamlessly between Millimeters and Inches.
 - **Scale to Fit**: Automatically scale your design to fit any custom paper size.
+- **Layer by Nesting Depth**: Groups paths by their enclosure depth (Island > Lake > Island) and exports them as Inkscape layers. Ideal for assigning different cut/draw parameters to inner holes vs outer contours.
 - **Rotation**: Rotate output 90° for optimal paper usage.
 - **Simulator**: Visual playback of the plot job, including travel moves and pen-up/down events.
 
