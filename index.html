@@ -7,8 +7,8 @@
   <meta name="description"
     content="SVG optimizer for plotters and cutting machines - merge paths, remove overdraw, optimize cut order" />
   <title>Watertight SVG - Plotter Optimizer</title>
-  <script type="module" crossorigin src="./assets/index-zAuzUeor.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-hhJVGJJC.css">
+  <script type="module" crossorigin src="./assets/index-CN5nPbPR.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-DmCZZTU3.css">
 </head>
 
 <body>
@@ -50,6 +50,25 @@
 
         <aside class="controls" id="controls" style="grid-area: settings;">
           <h2>Optimization Settings</h2>
+
+          <!-- Presets Selector -->
+          <div class="control-group" style="padding-bottom: 0; border-bottom: none;">
+            <div class="preset-selector">
+              <label class="preset-label">
+                <input type="radio" name="preset" value="cutter" checked />
+                <span class="preset-bubble">Cutter</span>
+              </label>
+              <label class="preset-label">
+                <input type="radio" name="preset" value="plotter" />
+                <span class="preset-bubble">Plotter</span>
+              </label>
+              <label class="preset-label">
+                <input type="radio" name="preset" value="custom" disabled />
+                <span class="preset-bubble">Custom</span>
+              </label>
+            </div>
+          </div>
+
           <div class="control-group">
             <label>
               <input type="checkbox" id="removeOverdraw" checked />
