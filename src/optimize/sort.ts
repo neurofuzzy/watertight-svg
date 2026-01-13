@@ -130,7 +130,11 @@ function twoOptSwap(paths: Path[], i: number, j: number): Path[] {
 
     // Add reversed segment from i to j
     for (let k = j; k >= i; k--) {
-        result.push(paths[k]);
+        // Deep Reversal: Reverse the path geometry too so the flow is continuous
+        // old: A -> B -> C
+        // new: reverse(C) -> reverse(B) -> reverse(A)
+        // This ensures C.end connects to B.start (now reversed B.end), etc.
+        result.push(reversePath(paths[k]));
     }
 
     // Add paths after j
