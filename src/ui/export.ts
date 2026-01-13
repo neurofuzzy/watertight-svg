@@ -9,15 +9,60 @@ import type { Path, SVGDocument } from '../geometry/types';
  * Combines all closed paths into a single path element with evenodd fill-rule
  * to correctly render holes (matching the preview renderer).
  */
-export function exportSVG(doc: SVGDocument): string {
+export function exportSVG(
+    doc: SVGDocument,
+    layers?: Map<number, Path[]>
+): string {
+    const viewBox = doc.viewBox || `0 0 ${doc.width} ${doc.height}`;
+    let content = '';
+
+    if (layers && layers.size > 0) {
+        // --- Layered Export ---
+        const sortedDepths = Array.from(layers.keys()).sort((a, b) => a - b);
+
+        const groups: string[] = [];
+        for (const depth of sortedDepths) {
+            const paths = layers.get(depth)!;
+            const pathElements = pathsToSVGElements(paths);
+
+            // Create Inkscape Layer Group
+            // Depth 0 is usually "Open Paths" or "Background"
+            // Depth 1+ are nested levels
+            const label = depth === 0 ? "Open Paths" : `Depth ${depth}`;
+
+            groups.push(`  <g inkscape:groupmode="layer" inkscape:label="${label}" id="depth-${depth}">
+    ${pathElements.join('\n    ')}
+  </g>`);
+        }
+        content = groups.join('\n');
+
+    } else {
+        // --- Standard Flat Export (Original Logic) ---
+        content = pathsToSVGElements(doc.paths).join('\n  ');
+    }
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     viewBox="${viewBox}" 
+     width="${doc.width}mm" 
+     height="${doc.height}mm">
+${content}
+</svg>`;
+}
+
+/**
+ * Helper to convert a list of paths to SVG string elements
+ * (Extracted from original exportSVG)
+ */
+function pathsToSVGElements(paths: Path[]): string[] {
     // Separate closed and open paths
-    const closedPaths = doc.paths.filter(p => p.closed && p.points.length >= 3);
-    const openPaths = doc.paths.filter(p => !p.closed || p.points.length < 3);
+    const closedPaths = paths.filter(p => p.closed && p.points.length >= 3);
+    const openPaths = paths.filter(p => !p.closed || p.points.length < 3);
 
     const elements: string[] = [];
 
     // Combine all closed paths into one element with evenodd fill
-    // This is critical for holes/winding to work correctly
     if (closedPaths.length > 0) {
         const d = closedPaths.map(path => {
             const start = path.points[0];
@@ -25,24 +70,19 @@ export function exportSVG(doc: SVGDocument): string {
             return `M${formatNum(start.x)} ${formatNum(start.y)} ${lines} Z`;
         }).join(' ');
 
+        // Use stroke width from first path (should be uniform for export)
         const strokeWidth = closedPaths[0]?.meta?.strokeWidth || 1;
+
+        // Note: For layered export, we might want individual paths if the user plans to edit them?
+        // But for cutting, a combined path is usually fine.
+        // Let's stick to the combined path for consistency with preview/original logic.
         elements.push(`<path d="${d}" fill="none" stroke="black" stroke-width="${strokeWidth}" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round" />`);
     }
 
     // Export open paths individually
     elements.push(...openPaths.map(pathToSVGPath));
 
-    const paths = elements.join('\n  ');
-
-    const viewBox = doc.viewBox || `0 0 ${doc.width} ${doc.height}`;
-
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" 
-     viewBox="${viewBox}" 
-     width="${doc.width}mm" 
-     height="${doc.height}mm">
-  ${paths}
-</svg>`;
+    return elements;
 }
 
 /**
@@ -132,8 +172,12 @@ interface Point {
 /**
  * Trigger a download of the SVG file.
  */
-export function downloadSVG(doc: SVGDocument, filename: string = 'optimized.svg'): void {
-    const svgString = exportSVG(doc);
+export function downloadSVG(
+    doc: SVGDocument,
+    filename: string = 'optimized.svg',
+    layers?: Map<number, Path[]>
+): void {
+    const svgString = exportSVG(doc, layers);
     const blob = new Blob([svgString], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
 

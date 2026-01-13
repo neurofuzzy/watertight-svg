@@ -12,6 +12,7 @@ import { renderPreview } from './ui/preview';
 import { downloadSVG } from './ui/export';
 import { PanZoomController } from './ui/panzoom';
 import { Simulator } from './ui/simulator';
+import { groupPathsByDepth } from './optimize/nesting';
 
 // DOM Elements
 const dropZone = document.getElementById('dropZone')!;
@@ -39,12 +40,11 @@ const pageSetupModal = document.getElementById('pageSetupModal')!;
 const closePageSetupBtn = document.getElementById('closePageSetupBtn')!;
 const scaleToFitInput = document.getElementById('scaleToFit') as HTMLInputElement;
 // Scale to Fit defaults to TRUE per user request, update DOM manual override if HTML checked attribute isn't set
-// Scale to Fit defaults to TRUE per user request, update DOM manual override if HTML checked attribute isn't set
 scaleToFitInput.checked = true;
 const rotateOutputInput = document.getElementById('rotateOutput') as HTMLInputElement;
+const layerByDepthInput = document.getElementById('layerByDepth') as HTMLInputElement;
 
 const paperSettingsContainer = document.getElementById('paperSettings')!;
-// Removed paperSizeSelect
 const customWidthInput = document.getElementById('customWidth') as HTMLInputElement;
 const customHeightInput = document.getElementById('customHeight') as HTMLInputElement;
 
@@ -448,6 +448,7 @@ function loadSettings() {
             if (s.penWeight) penWeightInput.value = s.penWeight;
             if (s.scaleToFit !== undefined) scaleToFitInput.checked = s.scaleToFit;
             if (s.rotateOutput !== undefined) rotateOutputInput.checked = s.rotateOutput;
+            if (s.layerByDepth !== undefined) layerByDepthInput.checked = s.layerByDepth;
             if (s.customWidth) customWidthInput.value = s.customWidth;
             if (s.customHeight) customHeightInput.value = s.customHeight;
         } catch (e) { console.error('Failed to load settings', e); }
@@ -461,6 +462,7 @@ function saveSettings() {
         penWeight: penWeightInput.value,
         scaleToFit: scaleToFitInput.checked,
         rotateOutput: rotateOutputInput.checked,
+        layerByDepth: layerByDepthInput.checked,
         customWidth: customWidthInput.value,
         customHeight: customHeightInput.value
     };
@@ -525,6 +527,13 @@ function setupButtons() {
                 }
             }));
 
+            // Handle Layering
+            let layers: Map<number, Path[]> | undefined;
+            if (layerByDepthInput.checked) {
+                // Dynamically import grouping logic or ensure it's imported
+                layers = groupPathsByDepth(paths);
+            }
+
             const docToExport: SVGDocument = {
                 ...currentResult.optimized,
                 paths,
@@ -533,7 +542,7 @@ function setupButtons() {
                 viewBox
             };
 
-            downloadSVG(docToExport, 'optimized.svg');
+            downloadSVG(docToExport, 'optimized.svg', layers);
         }
     });
 }
