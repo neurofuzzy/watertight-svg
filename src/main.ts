@@ -303,6 +303,28 @@ function setupControls() {
             pageSetupModal.classList.add('hidden');
         }
     });
+
+    // Layer by depth setting change - update preview rendering only
+    layerByDepthInput.addEventListener('change', () => {
+        if (currentResult) {
+            // Check for Plotter Mode (Merge + None) to disable fill preview
+            const options = getOptions();
+            const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
+
+            // Compute layers for layer-based coloring if enabled
+            let layers: Map<number, Path[]> | undefined;
+            if (layerByDepthInput.checked) {
+                layers = groupPathsByDepth(currentResult.optimized.paths);
+            }
+
+            renderPreview(optimizedPreview, currentResult.optimized, {
+                showTravel: true,
+                ...(isPlotterMode && { fillColor: 'none' }),
+                ...(layers && { layers })
+            });
+        }
+        saveSettings();
+    });
 }
 
 // Update page settings (Simulator/Export only)
@@ -640,9 +662,16 @@ function handleOptimizationSuccess(result: OptimizeResult) {
     const options = getOptions();
     const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
 
+    // Compute layers for layer-based coloring if enabled
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(currentResult.optimized.paths);
+    }
+
     renderPreview(optimizedPreview, currentResult.optimized, {
         showTravel: true,
-        ...(isPlotterMode && { fillColor: 'none' })
+        ...(isPlotterMode && { fillColor: 'none' }),
+        ...(layers && { layers })
     });
 
     // Attach Pan/Zoom controller
@@ -827,7 +856,14 @@ function initSimulator() {
     }
 
     const penWeight = parseFloat(penWeightInput.value);
-    simulator.setData(paths, { width, height }, penWeight, scaleToFitInput.checked);
+
+    // Compute layers for layer-based coloring if enabled
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(paths);
+    }
+
+    simulator.setData(layers || paths, { width, height }, penWeight, scaleToFitInput.checked);
 
     // Reset controls
     simScrubber.value = "0";

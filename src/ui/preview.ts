@@ -3,7 +3,7 @@
  * Renders paths to a container for visualization
  */
 
-import type { SVGDocument } from '../geometry/types';
+import type { SVGDocument, Path } from '../geometry/types';
 
 export interface PreviewOptions {
     /** Show travel paths (pen-up moves) */
@@ -16,6 +16,8 @@ export interface PreviewOptions {
     fillColor?: string;
     /** Stroke width */
     strokeWidth?: number;
+    /** Layer groups for depth-based coloring */
+    layers?: Map<number, Path[]>;
 }
 
 const defaultOptions: PreviewOptions = {
@@ -134,12 +136,21 @@ export function renderPreview(
     ];
 
     // Render draw paths
+    const getPathDepth = (path: Path): number => {
+        if (!opts.layers) return 0;
+        for (const [depth, paths] of opts.layers) {
+            if (paths.includes(path)) return depth;
+        }
+        return 0; // fallback
+    };
+
     let drawIndex = 0;
     for (const path of doc.paths) {
         if (path.points.length < 2) continue;
 
-        const strokeColor = PALETTE[drawIndex % PALETTE.length];
-        drawIndex++;
+        const pathDepth = opts.layers ? getPathDepth(path) : drawIndex;
+        const strokeColor = PALETTE[pathDepth % PALETTE.length];
+        if (!opts.layers) drawIndex++;
 
         const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         const points = path.points.map(p => `${p.x},${p.y}`).join(' ');

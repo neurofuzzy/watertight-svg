@@ -86,10 +86,10 @@ export class Simulator {
 
     private fragmentShaderSource = `#version 300 es
     precision mediump float;
-    
+
     in float v_cumDist;
     in float v_type;
-    
+
     uniform float u_maxDist;
     uniform bool u_isPoints;
     uniform bool u_showTravel;
@@ -105,22 +105,32 @@ export class Simulator {
             vec2 cxy = 2.0 * gl_PointCoord - 1.0;
             float r = dot(cxy, cxy);
             if (r > 1.0) discard;
-            
+
+
             // Blot color (Slightly lighter blue)
             outColor = vec4(0.6, 0.8, 1.0, 0.9);
             return;
         }
 
-        if (v_type > 1.5) {
-             // Outline - Dark Gray
-             outColor = vec4(0.3, 0.3, 0.3, 1.0);
-             return;
+        if (v_type > 6.5) {
+              // Outline - Dark Gray
+              outColor = vec4(0.3, 0.3, 0.3, 1.0);
+              return;
         }
 
         if (v_type > 0.5) {
-            // Draw (Pen Down)
-            // Use blue for visibility on dark background
-            outColor = vec4(0.3, 0.6, 1.0, 1.0); 
+            // Draw (Pen Down) - Layer-based coloring
+            // Palette: depth 0 = 1 (red), depth 1 = 2 (green), etc., cycling
+            int depthIndex = int(v_type - 1.0);
+            vec3 palette[5] = vec3[5](
+                vec3(1.0, 0.6, 0.6), // Red
+                vec3(0.55, 1.0, 0.55), // Green
+                vec3(0.55, 0.66, 1.0), // Blue
+                vec3(1.0, 1.0, 0.4), // Yellow
+                vec3(1.0, 0.55, 1.0)  // Magenta
+            );
+            vec3 color = palette[depthIndex % 5];
+            outColor = vec4(color, 1.0);
         } else {
             // Travel (Pen Up)
             if (!u_showTravel) discard;
@@ -155,10 +165,21 @@ export class Simulator {
         return shader;
     }
 
-    public setData(paths: Path[], bounds: { width: number, height: number }, _penWeight: number = 0.3, showOutline: boolean = false) {
+    public setData(paths: Path[] | Map<number, Path[]>, bounds: { width: number, height: number }, _penWeight: number = 0.3, showOutline: boolean = false) {
         // penWeight is unused in simulator (WebGL line width limit), but kept for API compatibility if needed
         // or we can just ignore it.
         // this.penWeight = penWeight; // Removed usage
+
+        // Normalize paths to array, and create depth mapping for coloring
+        const pathArray = Array.isArray(paths) ? paths : Array.from(paths.values()).flat();
+        const getPathDepth = (path: Path): number => {
+            if (!Array.isArray(paths)) {
+                for (const [depth, layerPaths] of paths) {
+                    if (layerPaths.includes(path)) return depth;
+                }
+            }
+            return 0; // fallback, or default depth
+        };
 
         // 0. Outline Data
         let outlinePoints = 0;
@@ -169,17 +190,17 @@ export class Simulator {
         // 1. Line Data
         let totalPoints = 0;
         // Calculate size first
-        for (const path of paths) {
+        for (const path of pathArray) {
             if (path.points.length < 2) continue;
             totalPoints += (path.points.length - 1) * 2;
             if (path.closed) totalPoints += 2; // Closing segment
         }
-        totalPoints += Math.max(0, (paths.length - 1) * 2); // Travel moves
+        totalPoints += Math.max(0, (pathArray.length - 1) * 2); // Travel moves
 
         const lineData = new Float32Array((totalPoints + outlinePoints) * 4);
 
         // 2. Blot Data (Start and End of every path)
-        const blotData = new Float32Array(paths.length * 2 * 4);
+        const blotData = new Float32Array(pathArray.length * 2 * 4);
 
         let lineOffset = 0;
 
@@ -206,11 +227,12 @@ export class Simulator {
         let cumDist = 0;
         let lastPoint: Point | null = null;
 
-        for (const path of paths) {
+        for (const path of pathArray) {
             if (path.points.length < 2) continue;
 
             const pathStart = path.points[0];
             const pathEnd = path.points[path.points.length - 1];
+            const pathDepth = getPathDepth(path);
 
             // Travel from last point
             if (lastPoint) {
@@ -247,7 +269,7 @@ export class Simulator {
                 lineData[lineOffset++] = p1.x;
                 lineData[lineOffset++] = p1.y;
                 lineData[lineOffset++] = cumDist;
-                lineData[lineOffset++] = 1;
+                lineData[lineOffset++] = pathDepth + 1;
 
                 cumDist += dist;
 
@@ -255,7 +277,7 @@ export class Simulator {
                 lineData[lineOffset++] = p2.x;
                 lineData[lineOffset++] = p2.y;
                 lineData[lineOffset++] = cumDist;
-                lineData[lineOffset++] = 1;
+                lineData[lineOffset++] = pathDepth + 1;
             }
 
             // Draw Closing Segment if closed
@@ -268,7 +290,7 @@ export class Simulator {
                 lineData[lineOffset++] = p1.x;
                 lineData[lineOffset++] = p1.y;
                 lineData[lineOffset++] = cumDist;
-                lineData[lineOffset++] = 1;
+                lineData[lineOffset++] = pathDepth + 1;
 
                 cumDist += dist;
 
@@ -276,7 +298,7 @@ export class Simulator {
                 lineData[lineOffset++] = p2.x;
                 lineData[lineOffset++] = p2.y;
                 lineData[lineOffset++] = cumDist;
-                lineData[lineOffset++] = 1;
+                lineData[lineOffset++] = pathDepth + 1;
 
                 lastPoint = pathStart;
             } else {
