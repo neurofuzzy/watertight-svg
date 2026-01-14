@@ -238,7 +238,7 @@ export class Simulator {
             if (lastPoint) {
                 const dist = Math.hypot(pathStart.x - lastPoint.x, pathStart.y - lastPoint.y);
 
-                // Start of travel
+                // Start of travel (travel segment uses type 0)
                 lineData[lineOffset++] = lastPoint.x;
                 lineData[lineOffset++] = lastPoint.y;
                 lineData[lineOffset++] = cumDist;
@@ -250,7 +250,7 @@ export class Simulator {
                 lineData[lineOffset++] = pathStart.x;
                 lineData[lineOffset++] = pathStart.y;
                 lineData[lineOffset++] = cumDist;
-                lineData[lineOffset++] = 0;
+                lineData[lineOffset++] = 0; // Travel segment uses type 0
             }
 
             // Record Pen Down Blot
