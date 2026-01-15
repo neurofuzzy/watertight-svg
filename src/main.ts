@@ -167,6 +167,15 @@ function updatePreviewWithCurrentLayers() {
         useLayerColors: layerByDepthInput.checked,
         ...(isPlotterMode && { fillColor: 'none' })
     }, layers);
+
+    // Update optimized stats display with current layer count
+    const optimizedStatsWithLayers = { ...currentResult.afterStats };
+    if (layerByDepthInput.checked) {
+        optimizedStatsWithLayers.layerCount = layers ? layers.size : 1;
+    } else {
+        optimizedStatsWithLayers.layerCount = 1;
+    }
+    optimizedStats.textContent = formatStats(optimizedStatsWithLayers);
 }
 
 // Setup control inputs
