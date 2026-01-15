@@ -168,6 +168,15 @@ function updatePreviewWithCurrentLayers() {
         ...(isPlotterMode && { fillColor: 'none' })
     }, layers);
 
+    // Re-attach pan/zoom controller to new SVG elements to maintain sync and state
+    const originalSvg = originalPreview.querySelector('svg');
+    const optimizedSvg = optimizedPreview.querySelector('svg');
+
+    if (originalSvg && optimizedSvg) {
+        // Pass false to preserve current zoom/pan state
+        panZoom.attach([originalSvg, optimizedSvg], false);
+    }
+
     // Update optimized stats display with current layer count
     const optimizedStatsWithLayers = { ...currentResult.afterStats };
     if (layerByDepthInput.checked) {
@@ -278,7 +287,7 @@ function setupControls() {
     sortPathsInput.addEventListener('change', onSettingChange);
     gapToleranceInput.addEventListener('change', onSettingChange);
     fixWindingInput.addEventListener('change', onSettingChange);
-    
+
     // Layer by depth checkbox - need to re-render preview when changed
     layerByDepthInput.addEventListener('change', () => {
         updatePreviewWithCurrentLayers();
@@ -702,7 +711,7 @@ function handleOptimizationSuccess(result: OptimizeResult) {
 
     // Update stats
     originalStats.textContent = formatStats(currentResult.beforeStats);
-    
+
     // Calculate layer count for optimized stats based on current UI state
     const optimizedStatsWithLayers = { ...currentResult.afterStats };
     if (layerByDepthInput.checked) {
@@ -711,7 +720,7 @@ function handleOptimizationSuccess(result: OptimizeResult) {
     } else {
         optimizedStatsWithLayers.layerCount = 1;
     }
-    
+
     optimizedStats.textContent = formatStats(optimizedStatsWithLayers);
 
     // Enable export & simulate
