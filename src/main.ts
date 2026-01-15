@@ -148,6 +148,27 @@ function showPreview() {
     dropZone.style.padding = 'var(--space-md)';
 }
 
+// Update preview with current layer settings
+function updatePreviewWithCurrentLayers() {
+    if (!currentResult) return;
+
+    // Calculate layers if layer by depth is enabled
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(currentResult.optimized.paths);
+    }
+
+    // Check for Plotter Mode (Merge + None) to disable fill preview
+    const options = getOptions();
+    const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
+
+    renderPreview(optimizedPreview, currentResult.optimized, {
+        showTravel: true,
+        useLayerColors: layerByDepthInput.checked,
+        ...(isPlotterMode && { fillColor: 'none' })
+    }, layers);
+}
+
 // Setup control inputs
 function setupControls() {
     // Gap tolerance slider
@@ -258,6 +279,13 @@ function setupControls() {
     // Output Settings Listeners
     // Decoupled from autoOptimize as per user request
     scaleToFitInput.addEventListener('change', () => {
+        updatePageSettings();
+        saveSettings();
+    });
+
+    // Layer by depth checkbox - need to re-render preview when changed
+    layerByDepthInput.addEventListener('change', () => {
+        updatePreviewWithCurrentLayers();
         updatePageSettings();
         saveSettings();
     });
@@ -630,6 +658,12 @@ function runOptimization() {
 function handleOptimizationSuccess(result: OptimizeResult) {
     currentResult = result;
 
+    // Calculate layers if layer by depth is enabled
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(currentResult.optimized.paths);
+    }
+
     // Render previews
     renderPreview(originalPreview, currentResult.original, {
         showTravel: false,
@@ -642,8 +676,9 @@ function handleOptimizationSuccess(result: OptimizeResult) {
 
     renderPreview(optimizedPreview, currentResult.optimized, {
         showTravel: true,
+        useLayerColors: layerByDepthInput.checked,
         ...(isPlotterMode && { fillColor: 'none' })
-    });
+    }, layers);
 
     // Attach Pan/Zoom controller
     const originalSvg = originalPreview.querySelector('svg');
@@ -807,12 +842,23 @@ function initSimulator() {
         } else { width = viewPort.width; height = viewPort.height; }
     }
 
+    // Calculate layers if layer by depth is enabled (needed for simulator layer coloring)
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(paths);
+    }
+
     // Apply Rotation if enabled
     if (rotateOutputInput.checked) {
         const rotated = rotatePaths(paths, width, height);
         paths = rotated.paths;
         width = rotated.width;
         height = rotated.height;
+        
+        // Recalculate layers after rotation if layering is enabled
+        if (layerByDepthInput.checked) {
+            layers = groupPathsByDepth(paths);
+        }
     }
 
     // Apply Page Setup Scanning
@@ -824,10 +870,15 @@ function initSimulator() {
         paths = scaledPaths;
         width = pWidth;
         height = pHeight;
+        
+        // Recalculate layers after scaling if layering is enabled
+        if (layerByDepthInput.checked) {
+            layers = groupPathsByDepth(paths);
+        }
     }
 
     const penWeight = parseFloat(penWeightInput.value);
-    simulator.setData(paths, { width, height }, penWeight, scaleToFitInput.checked);
+    simulator.setData(paths, { width, height }, penWeight, scaleToFitInput.checked, layers);
 
     // Reset controls
     simScrubber.value = "0";

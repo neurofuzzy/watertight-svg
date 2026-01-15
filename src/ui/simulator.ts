@@ -30,6 +30,9 @@ export class Simulator {
     private showBlots: boolean = false;
     private showTravel: boolean = true;
 
+    // Layer Data
+    private useLayerColors: boolean = false;
+
     // Store bounds for resize recalculation
     private currentBounds: { width: number, height: number } = { width: 1, height: 1 };
 
@@ -59,15 +62,18 @@ export class Simulator {
     in vec2 a_position;
     in float a_cumDist;
     in float a_type; // 0 = travel, 1 = draw, 2 = outline
+    in float a_layerDepth; // Layer depth for coloring
 
     uniform vec2 u_resolution;
     uniform vec2 u_scale;
     uniform vec2 u_offset;
     uniform bool u_isPoints;
     uniform float u_pointSize;
+    uniform bool u_useLayerColors;
 
     out float v_cumDist;
     out float v_type;
+    out float v_layerDepth;
 
     void main() {
         // Convert to clip space
@@ -82,6 +88,7 @@ export class Simulator {
         // Pass to fragment for smooth interpolation
         v_cumDist = a_cumDist;
         v_type = a_type;
+        v_layerDepth = a_layerDepth;
     }`;
 
     private fragmentShaderSource = `#version 300 es
@@ -89,10 +96,12 @@ export class Simulator {
     
     in float v_cumDist;
     in float v_type;
+    in float v_layerDepth;
     
     uniform float u_maxDist;
     uniform bool u_isPoints;
     uniform bool u_showTravel;
+    uniform bool u_useLayerColors;
 
     out vec4 outColor;
 
@@ -119,8 +128,24 @@ export class Simulator {
 
         if (v_type > 0.5) {
             // Draw (Pen Down)
-            // Use blue for visibility on dark background
-            outColor = vec4(0.3, 0.6, 1.0, 1.0); 
+            if (u_useLayerColors) {
+                // Use layer-based coloring with pastel palette
+                float layerIndex = mod(v_layerDepth, 5.0);
+                if (layerIndex < 1.0) {
+                    outColor = vec4(1.0, 0.6, 0.67, 1.0); // #FF99AA
+                } else if (layerIndex < 2.0) {
+                    outColor = vec4(0.53, 1.0, 0.53, 1.0); // #88FF88
+                } else if (layerIndex < 3.0) {
+                    outColor = vec4(0.53, 0.67, 1.0, 1.0); // #88AAFF
+                } else if (layerIndex < 4.0) {
+                    outColor = vec4(1.0, 1.0, 0.4, 1.0); // #FFFF66
+                } else {
+                    outColor = vec4(1.0, 0.53, 1.0, 1.0); // #FF88FF
+                }
+            } else {
+                // Default blue for visibility on dark background
+                outColor = vec4(0.3, 0.6, 1.0, 1.0); 
+            }
         } else {
             // Travel (Pen Up)
             if (!u_showTravel) discard;
@@ -155,7 +180,7 @@ export class Simulator {
         return shader;
     }
 
-    public setData(paths: Path[], bounds: { width: number, height: number }, _penWeight: number = 0.3, showOutline: boolean = false) {
+    public setData(paths: Path[], bounds: { width: number, height: number }, _penWeight: number = 0.3, showOutline: boolean = false, layers?: Map<number, Path[]>) {
         // penWeight is unused in simulator (WebGL line width limit), but kept for API compatibility if needed
         // or we can just ignore it.
         // this.penWeight = penWeight; // Removed usage
@@ -164,6 +189,17 @@ export class Simulator {
         let outlinePoints = 0;
         if (showOutline) {
             outlinePoints = 8; // 4 lines * 2 points
+        }
+
+        // Setup layer coloring if layers are provided
+        this.useLayerColors = !!layers;
+        const pathToLayer = new Map<Path, number>();
+        if (layers) {
+            for (const [depth, pathsInLayer] of layers) {
+                for (const path of pathsInLayer) {
+                    pathToLayer.set(path, depth);
+                }
+            }
         }
 
         // 1. Line Data
@@ -176,10 +212,10 @@ export class Simulator {
         }
         totalPoints += Math.max(0, (paths.length - 1) * 2); // Travel moves
 
-        const lineData = new Float32Array((totalPoints + outlinePoints) * 4);
+        const lineData = new Float32Array((totalPoints + outlinePoints) * 5); // x, y, cumDist, type, layerDepth
 
         // 2. Blot Data (Start and End of every path)
-        const blotData = new Float32Array(paths.length * 2 * 4);
+        const blotData = new Float32Array(paths.length * 2 * 5); // x, y, cumDist, type, layerDepth
 
         let lineOffset = 0;
 
@@ -188,17 +224,17 @@ export class Simulator {
             const w = bounds.width;
             const h = bounds.height;
             // Top
-            lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
-            lineData[lineOffset++] = w; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2; lineData[lineOffset++] = 0;
+            lineData[lineOffset++] = w; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2; lineData[lineOffset++] = 0;
             // Right
-            lineData[lineOffset++] = w; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
-            lineData[lineOffset++] = w; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            lineData[lineOffset++] = w; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2; lineData[lineOffset++] = 0;
+            lineData[lineOffset++] = w; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2; lineData[lineOffset++] = 0;
             // Bottom
-            lineData[lineOffset++] = w; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
-            lineData[lineOffset++] = 0; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            lineData[lineOffset++] = w; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2; lineData[lineOffset++] = 0;
+            lineData[lineOffset++] = 0; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2; lineData[lineOffset++] = 0;
             // Left
-            lineData[lineOffset++] = 0; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
-            lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2;
+            lineData[lineOffset++] = 0; lineData[lineOffset++] = h; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2; lineData[lineOffset++] = 0;
+            lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 0; lineData[lineOffset++] = 2; lineData[lineOffset++] = 0;
         }
         this.vertexCount = (totalPoints + outlinePoints); // Correct vertex count? check draw
 
@@ -211,6 +247,7 @@ export class Simulator {
 
             const pathStart = path.points[0];
             const pathEnd = path.points[path.points.length - 1];
+            const layerDepth = pathToLayer.get(path) || 0;
 
             // Travel from last point
             if (lastPoint) {
@@ -221,6 +258,7 @@ export class Simulator {
                 lineData[lineOffset++] = lastPoint.y;
                 lineData[lineOffset++] = cumDist;
                 lineData[lineOffset++] = 0;
+                lineData[lineOffset++] = layerDepth;
 
                 cumDist += dist;
 
@@ -229,6 +267,7 @@ export class Simulator {
                 lineData[lineOffset++] = pathStart.y;
                 lineData[lineOffset++] = cumDist;
                 lineData[lineOffset++] = 0;
+                lineData[lineOffset++] = layerDepth;
             }
 
             // Record Pen Down Blot
@@ -236,6 +275,7 @@ export class Simulator {
             blotData[blotOffset++] = pathStart.y;
             blotData[blotOffset++] = cumDist; // Appears right when pen lands
             blotData[blotOffset++] = 1; // Type doesn't really matter for blots, but 1 matches "draw"
+            blotData[blotOffset++] = layerDepth;
 
             // Draw segments
             for (let i = 0; i < path.points.length - 1; i++) {
@@ -248,6 +288,7 @@ export class Simulator {
                 lineData[lineOffset++] = p1.y;
                 lineData[lineOffset++] = cumDist;
                 lineData[lineOffset++] = 1;
+                lineData[lineOffset++] = layerDepth;
 
                 cumDist += dist;
 
@@ -256,6 +297,7 @@ export class Simulator {
                 lineData[lineOffset++] = p2.y;
                 lineData[lineOffset++] = cumDist;
                 lineData[lineOffset++] = 1;
+                lineData[lineOffset++] = layerDepth;
             }
 
             // Draw Closing Segment if closed
@@ -269,6 +311,7 @@ export class Simulator {
                 lineData[lineOffset++] = p1.y;
                 lineData[lineOffset++] = cumDist;
                 lineData[lineOffset++] = 1;
+                lineData[lineOffset++] = layerDepth;
 
                 cumDist += dist;
 
@@ -277,6 +320,7 @@ export class Simulator {
                 lineData[lineOffset++] = p2.y;
                 lineData[lineOffset++] = cumDist;
                 lineData[lineOffset++] = 1;
+                lineData[lineOffset++] = layerDepth;
 
                 lastPoint = pathStart;
             } else {
@@ -288,11 +332,12 @@ export class Simulator {
             blotData[blotOffset++] = lastPoint.y;
             blotData[blotOffset++] = cumDist; // Appears right when pen lifts
             blotData[blotOffset++] = 1;
+            blotData[blotOffset++] = layerDepth;
         }
 
         this.totalDistance = cumDist;
-        this.vertexCount = lineOffset / 4;
-        this.blotCount = blotOffset / 4;
+        this.vertexCount = lineOffset / 5;
+        this.blotCount = blotOffset / 5;
 
         // Upload Lines
         const gl = this.gl;
@@ -428,15 +473,18 @@ export class Simulator {
 
         gl.uniform1f(uMaxDist, currentMaxDist);
         gl.uniform1i(uShowTravel, this.showTravel ? 1 : 0);
+        gl.uniform1i(gl.getUniformLocation(this.program, 'u_useLayerColors'), this.useLayerColors ? 1 : 0);
 
-        const stride = 4 * 4;
+        const stride = 5 * 4; // 5 floats per vertex: x, y, cumDist, type, layerDepth
         const posLoc = gl.getAttribLocation(this.program, 'a_position');
         const distLoc = gl.getAttribLocation(this.program, 'a_cumDist');
         const typeLoc = gl.getAttribLocation(this.program, 'a_type');
+        const layerLoc = gl.getAttribLocation(this.program, 'a_layerDepth');
 
         gl.enableVertexAttribArray(posLoc);
         gl.enableVertexAttribArray(distLoc);
         gl.enableVertexAttribArray(typeLoc);
+        gl.enableVertexAttribArray(layerLoc);
 
         // Calculate Line Width based on Pen Weight
         // pixelScale = pixels / mm
@@ -451,6 +499,7 @@ export class Simulator {
         gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, stride, 0);
         gl.vertexAttribPointer(distLoc, 1, gl.FLOAT, false, stride, 8);
         gl.vertexAttribPointer(typeLoc, 1, gl.FLOAT, false, stride, 12);
+        gl.vertexAttribPointer(layerLoc, 1, gl.FLOAT, false, stride, 16);
         gl.drawArrays(gl.LINES, 0, this.vertexCount);
 
         // 2. Draw Blots (if enabled)
@@ -463,6 +512,7 @@ export class Simulator {
             gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, stride, 0);
             gl.vertexAttribPointer(distLoc, 1, gl.FLOAT, false, stride, 8);
             gl.vertexAttribPointer(typeLoc, 1, gl.FLOAT, false, stride, 12);
+            gl.vertexAttribPointer(layerLoc, 1, gl.FLOAT, false, stride, 16);
             gl.drawArrays(gl.POINTS, 0, this.blotCount);
         }
     }
