@@ -691,7 +691,17 @@ function handleOptimizationSuccess(result: OptimizeResult) {
 
     // Update stats
     originalStats.textContent = formatStats(currentResult.beforeStats);
-    optimizedStats.textContent = formatStats(currentResult.afterStats);
+    
+    // Calculate layer count for optimized stats based on current UI state
+    const optimizedStatsWithLayers = { ...currentResult.afterStats };
+    if (layerByDepthInput.checked) {
+        const layers = groupPathsByDepth(currentResult.optimized.paths);
+        optimizedStatsWithLayers.layerCount = layers.size;
+    } else {
+        optimizedStatsWithLayers.layerCount = 1;
+    }
+    
+    optimizedStats.textContent = formatStats(optimizedStatsWithLayers);
 
     // Enable export & simulate
     exportBtn.removeAttribute('disabled');
