@@ -842,23 +842,12 @@ function initSimulator() {
         } else { width = viewPort.width; height = viewPort.height; }
     }
 
-    // Calculate layers if layer by depth is enabled (needed for simulator layer coloring)
-    let layers: Map<number, Path[]> | undefined;
-    if (layerByDepthInput.checked) {
-        layers = groupPathsByDepth(paths);
-    }
-
-    // Apply Rotation if enabled
+    // Apply transformations first
     if (rotateOutputInput.checked) {
         const rotated = rotatePaths(paths, width, height);
         paths = rotated.paths;
         width = rotated.width;
         height = rotated.height;
-        
-        // Recalculate layers after rotation if layering is enabled
-        if (layerByDepthInput.checked) {
-            layers = groupPathsByDepth(paths);
-        }
     }
 
     // Apply Page Setup Scanning
@@ -870,11 +859,12 @@ function initSimulator() {
         paths = scaledPaths;
         width = pWidth;
         height = pHeight;
-        
-        // Recalculate layers after scaling if layering is enabled
-        if (layerByDepthInput.checked) {
-            layers = groupPathsByDepth(paths);
-        }
+    }
+
+    // Calculate layers once after all transformations
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(paths);
     }
 
     const penWeight = parseFloat(penWeightInput.value);

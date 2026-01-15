@@ -4,6 +4,7 @@
  */
 
 import type { SVGDocument, Path } from '../geometry/types';
+import { getPathsOrderedByLayer } from '../optimize/nesting';
 
 export interface PreviewOptions {
     /** Show travel paths (pen-up moves) */
@@ -58,11 +59,24 @@ export function renderPreview(
     travelGroup.setAttribute('id', 'travel');
     drawGroup.setAttribute('id', 'paths');
 
+    // Use layer-ordered paths when layer coloring is enabled
+    const pathsToRender = opts.useLayerColors ? getPathsOrderedByLayer(doc.paths) : doc.paths;
+    
+    // Create a map of path to layer depth if layer coloring is enabled
+    const pathToLayer = new Map<Path, number>();
+    if (opts.useLayerColors && layers) {
+        for (const [depth, paths] of layers) {
+            for (const path of paths) {
+                pathToLayer.set(path, depth);
+            }
+        }
+    }
+
     // Render travel paths first (underneath)
     if (opts.showTravel) {
         let lastPoint = { x: 0, y: 0 };
 
-        for (const path of doc.paths) {
+        for (const path of pathsToRender) {
             if (path.points.length === 0) continue;
 
             const start = path.points[0];
@@ -139,17 +153,7 @@ export function renderPreview(
     // Render draw paths
     let drawIndex = 0;
     
-    // Create a map of path to layer depth if layer coloring is enabled
-    const pathToLayer = new Map<Path, number>();
-    if (opts.useLayerColors && layers) {
-        for (const [depth, paths] of layers) {
-            for (const path of paths) {
-                pathToLayer.set(path, depth);
-            }
-        }
-    }
-    
-    for (const path of doc.paths) {
+    for (const path of pathsToRender) {
         if (path.points.length < 2) continue;
 
         let strokeColor: string;
@@ -159,8 +163,10 @@ export function renderPreview(
         } else {
             // Default behavior: cycle by path index
             strokeColor = PALETTE[drawIndex % PALETTE.length];
-            drawIndex++;
         }
+        
+        // Always increment draw index to ensure proper fallback color cycling
+        drawIndex++;
 
         const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         const points = path.points.map(p => `${p.x},${p.y}`).join(' ');

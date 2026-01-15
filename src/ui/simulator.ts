@@ -3,6 +3,7 @@
  * Renders SVG paths progressively to simulate a plotter/laser cutter.
  */
 import type { Path, Point } from '../geometry/types';
+import { getPathsOrderedByLayer } from '../optimize/nesting';
 
 export class Simulator {
     private canvas: HTMLCanvasElement;
@@ -191,8 +192,10 @@ export class Simulator {
             outlinePoints = 8; // 4 lines * 2 points
         }
 
-        // Setup layer coloring if layers are provided
+        // Setup layer coloring and order paths by layer when layers are provided
         this.useLayerColors = !!layers;
+        const pathsToProcess = this.useLayerColors ? getPathsOrderedByLayer(paths) : paths;
+        
         const pathToLayer = new Map<Path, number>();
         if (layers) {
             for (const [depth, pathsInLayer] of layers) {
@@ -205,7 +208,7 @@ export class Simulator {
         // 1. Line Data
         let totalPoints = 0;
         // Calculate size first
-        for (const path of paths) {
+        for (const path of pathsToProcess) {
             if (path.points.length < 2) continue;
             totalPoints += (path.points.length - 1) * 2;
             if (path.closed) totalPoints += 2; // Closing segment
@@ -215,7 +218,7 @@ export class Simulator {
         const lineData = new Float32Array((totalPoints + outlinePoints) * 5); // x, y, cumDist, type, layerDepth
 
         // 2. Blot Data (Start and End of every path)
-        const blotData = new Float32Array(paths.length * 2 * 5); // x, y, cumDist, type, layerDepth
+        const blotData = new Float32Array(pathsToProcess.length * 2 * 5); // x, y, cumDist, type, layerDepth
 
         let lineOffset = 0;
 
@@ -242,7 +245,7 @@ export class Simulator {
         let cumDist = 0;
         let lastPoint: Point | null = null;
 
-        for (const path of paths) {
+        for (const path of pathsToProcess) {
             if (path.points.length < 2) continue;
 
             const pathStart = path.points[0];
