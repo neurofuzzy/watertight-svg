@@ -278,6 +278,13 @@ function setupControls() {
     sortPathsInput.addEventListener('change', onSettingChange);
     gapToleranceInput.addEventListener('change', onSettingChange);
     fixWindingInput.addEventListener('change', onSettingChange);
+    
+    // Layer by depth checkbox - need to re-render preview when changed
+    layerByDepthInput.addEventListener('change', () => {
+        updatePreviewWithCurrentLayers();
+        updatePageSettings();
+        saveSettings();
+    });
 
     // Fill Strategy Radios
     const fillRadios = document.querySelectorAll('input[name="fillStrategy"]');
@@ -292,12 +299,7 @@ function setupControls() {
         saveSettings();
     });
 
-    // Layer by depth checkbox - need to re-render preview when changed
-    layerByDepthInput.addEventListener('change', () => {
-        updatePreviewWithCurrentLayers();
-        updatePageSettings();
-        saveSettings();
-    });
+
 
     // Custom Size Inputs
     customWidthInput.addEventListener('change', () => { updatePageSettings(); saveSettings(); });
