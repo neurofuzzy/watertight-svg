@@ -7,8 +7,8 @@
   <meta name="description"
     content="SVG optimizer for plotters and cutting machines - merge paths, remove overdraw, optimize cut order" />
   <title>Watertight SVG - Plotter Optimizer</title>
-  <script type="module" crossorigin src="./assets/index-CcoxAtu2.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-DmCZZTU3.css">
+  <script type="module" crossorigin src="./assets/index-D9pJyml4.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-BY65aZ-F.css">
 </head>
 
 <body>
@@ -119,10 +119,17 @@
             </label>
           </div>
 
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="layerByDepth" />
+              Layer by nesting depth
+            </label>
+          </div>
+
           <div class="actions">
             <!-- Optimize button removed, auto-optimize is active -->
             <div class="secondary-actions">
-              <button type="button" id="pageSetupBtn" class="btn-secondary">Page Setup</button>
+              <button type="button" id="pageSetupBtn" class="btn-secondary">Paper & Units</button>
               <button type="button" id="simulateBtn" class="btn-secondary" disabled>Simulate</button>
               <button type="button" id="exportBtn" class="btn-secondary" disabled>Export SVG</button>
             </div>
@@ -137,7 +144,7 @@
         <h3>Page Setup</h3>
 
         <div class="control-group">
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="settings-grid">
             <label>
               <input type="checkbox" id="scaleToFit" />
               Scale to Fit Paper
@@ -146,17 +153,13 @@
               <input type="checkbox" id="rotateOutput" />
               Rotate 90°
             </label>
-            <label style="grid-column: span 2;">
-              <input type="checkbox" id="layerByDepth" />
-              Layer by nesting depth (Inkscape)
-            </label>
           </div>
         </div>
 
         <div class="control-group">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div class="settings-row">
             <label>Units</label>
-            <div style="display: flex; align-items: center; gap: 8px;">
+            <div class="unit-toggle-group">
               <span id="unitLabelMM" style="font-size: 0.8em; opacity: 0.5;">mm</span>
               <label class="switch">
                 <input type="checkbox" id="unitToggle" checked>
@@ -169,14 +172,14 @@
 
         <div class="control-group" id="paperSettings" style="opacity: 0.5; pointer-events: none;">
           <!-- Simplified: No presets, just custom W/H -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
-            <div>
-              <label style="font-size: 0.9em;">Width (<span class="unit-label">mm</span>)</label>
-              <input type="number" id="customWidth" value="8.5" step="0.1" style="width: 100%; padding: 4px;" />
+          <div class="settings-grid">
+            <div class="input-group-vertical">
+              <label class="input-label-sm">Width (<span class="unit-label">mm</span>)</label>
+              <input type="number" id="customWidth" value="8.5" step="0.1" />
             </div>
-            <div>
-              <label style="font-size: 0.9em;">Height (<span class="unit-label">mm</span>)</label>
-              <input type="number" id="customHeight" value="11" step="0.1" style="width: 100%; padding: 4px;" />
+            <div class="input-group-vertical">
+              <label class="input-label-sm">Height (<span class="unit-label">mm</span>)</label>
+              <input type="number" id="customHeight" value="11" step="0.1" />
             </div>
           </div>
 
