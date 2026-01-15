@@ -75,6 +75,8 @@ export interface PathStats {
     travelDistance: number;
     /** Number of closed paths */
     closedPaths: number;
+    /** Number of nesting layers */
+    layerCount: number;
 }
 
 /** Optimization options */

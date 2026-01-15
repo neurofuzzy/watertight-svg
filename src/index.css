@@ -803,6 +803,43 @@ body {
   gap: var(--space-md);
 }
 
+/* Modal Layout Utilities */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.unit-toggle-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.input-group-vertical {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.input-label-sm {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.settings-modal input[type="number"] {
+  width: 100%;
+}
+
 .secondary-actions button {
   font-size: 0.8rem;
   padding: var(--space-xs) var(--space-sm);

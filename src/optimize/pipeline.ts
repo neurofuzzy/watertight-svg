@@ -215,13 +215,14 @@ export function calculateStats(paths: Path[]): PathStats {
     }
 
     const travelDistance = calculateTravelDistance(paths);
-
+    
     return {
         pathCount: paths.length,
         segmentCount,
         totalLength,
         travelDistance,
         closedPaths,
+        layerCount: 1, // Default to 1, calculated at display time based on UI state
     };
 }
 
@@ -235,5 +236,6 @@ export function formatStats(stats: PathStats): string {
         `Draw: ${stats.totalLength.toFixed(1)}`,
         `Travel: ${stats.travelDistance.toFixed(1)}`,
         `Closed: ${stats.closedPaths}`,
+        `Layers: ${stats.layerCount}`,
     ].join(' | ');
 }

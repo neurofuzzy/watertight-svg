@@ -148,6 +148,45 @@ function showPreview() {
     dropZone.style.padding = 'var(--space-md)';
 }
 
+// Update preview with current layer settings
+function updatePreviewWithCurrentLayers() {
+    if (!currentResult) return;
+
+    // Calculate layers if layer by depth is enabled
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(currentResult.optimized.paths);
+    }
+
+    // Check for Plotter Mode (Merge + None) to disable fill preview
+    const options = getOptions();
+    const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
+
+    renderPreview(optimizedPreview, currentResult.optimized, {
+        showTravel: true,
+        useLayerColors: layerByDepthInput.checked,
+        ...(isPlotterMode && { fillColor: 'none' })
+    }, layers);
+
+    // Re-attach pan/zoom controller to new SVG elements to maintain sync and state
+    const originalSvg = originalPreview.querySelector('svg');
+    const optimizedSvg = optimizedPreview.querySelector('svg');
+
+    if (originalSvg && optimizedSvg) {
+        // Pass false to preserve current zoom/pan state
+        panZoom.attach([originalSvg, optimizedSvg], false);
+    }
+
+    // Update optimized stats display with current layer count
+    const optimizedStatsWithLayers = { ...currentResult.afterStats };
+    if (layerByDepthInput.checked) {
+        optimizedStatsWithLayers.layerCount = layers ? layers.size : 1;
+    } else {
+        optimizedStatsWithLayers.layerCount = 1;
+    }
+    optimizedStats.textContent = formatStats(optimizedStatsWithLayers);
+}
+
 // Setup control inputs
 function setupControls() {
     // Gap tolerance slider
@@ -249,6 +288,13 @@ function setupControls() {
     gapToleranceInput.addEventListener('change', onSettingChange);
     fixWindingInput.addEventListener('change', onSettingChange);
 
+    // Layer by depth checkbox - need to re-render preview when changed
+    layerByDepthInput.addEventListener('change', () => {
+        updatePreviewWithCurrentLayers();
+        updatePageSettings();
+        saveSettings();
+    });
+
     // Fill Strategy Radios
     const fillRadios = document.querySelectorAll('input[name="fillStrategy"]');
     fillRadios.forEach(radio => {
@@ -261,6 +307,8 @@ function setupControls() {
         updatePageSettings();
         saveSettings();
     });
+
+
 
     // Custom Size Inputs
     customWidthInput.addEventListener('change', () => { updatePageSettings(); saveSettings(); });
@@ -630,6 +678,12 @@ function runOptimization() {
 function handleOptimizationSuccess(result: OptimizeResult) {
     currentResult = result;
 
+    // Calculate layers if layer by depth is enabled
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(currentResult.optimized.paths);
+    }
+
     // Render previews
     renderPreview(originalPreview, currentResult.original, {
         showTravel: false,
@@ -642,8 +696,9 @@ function handleOptimizationSuccess(result: OptimizeResult) {
 
     renderPreview(optimizedPreview, currentResult.optimized, {
         showTravel: true,
+        useLayerColors: layerByDepthInput.checked,
         ...(isPlotterMode && { fillColor: 'none' })
-    });
+    }, layers);
 
     // Attach Pan/Zoom controller
     const originalSvg = originalPreview.querySelector('svg');
@@ -656,7 +711,17 @@ function handleOptimizationSuccess(result: OptimizeResult) {
 
     // Update stats
     originalStats.textContent = formatStats(currentResult.beforeStats);
-    optimizedStats.textContent = formatStats(currentResult.afterStats);
+
+    // Calculate layer count for optimized stats based on current UI state
+    const optimizedStatsWithLayers = { ...currentResult.afterStats };
+    if (layerByDepthInput.checked) {
+        const layers = groupPathsByDepth(currentResult.optimized.paths);
+        optimizedStatsWithLayers.layerCount = layers.size;
+    } else {
+        optimizedStatsWithLayers.layerCount = 1;
+    }
+
+    optimizedStats.textContent = formatStats(optimizedStatsWithLayers);
 
     // Enable export & simulate
     exportBtn.removeAttribute('disabled');
@@ -807,7 +872,7 @@ function initSimulator() {
         } else { width = viewPort.width; height = viewPort.height; }
     }
 
-    // Apply Rotation if enabled
+    // Apply transformations first
     if (rotateOutputInput.checked) {
         const rotated = rotatePaths(paths, width, height);
         paths = rotated.paths;
@@ -826,8 +891,14 @@ function initSimulator() {
         height = pHeight;
     }
 
+    // Calculate layers once after all transformations
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(paths);
+    }
+
     const penWeight = parseFloat(penWeightInput.value);
-    simulator.setData(paths, { width, height }, penWeight, scaleToFitInput.checked);
+    simulator.setData(paths, { width, height }, penWeight, scaleToFitInput.checked, layers);
 
     // Reset controls
     simScrubber.value = "0";
