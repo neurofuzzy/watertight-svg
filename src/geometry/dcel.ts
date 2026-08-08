@@ -4,7 +4,8 @@
  * A data structure for representing planar subdivisions.
  * Enables efficient traversal of faces (enclosed regions).
  * 
- * Designed for Rust/WASM portability - no DOM dependencies.
+ * No DOM dependencies - this runs in the optimization Web Worker and under
+ * Node in the test suite.
  */
 
 import type { Point } from './types';

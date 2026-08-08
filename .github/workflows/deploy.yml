@@ -31,9 +31,6 @@ jobs:
 
       - run: npm ci
 
-      # Note: the WASM region-finder is not built here. It is optional, unused
-      # at runtime, and building it would mean installing the Rust toolchain on
-      # every deploy. See tsconfig.json's exclude list.
       - name: Test
         run: npx vitest run
 
