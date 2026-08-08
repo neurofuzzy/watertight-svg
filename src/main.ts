@@ -188,6 +188,30 @@ function updatePreviewWithCurrentLayers() {
     optimizedStats.textContent = formatStats(optimizedStatsWithLayers);
 }
 
+/**
+ * Point the preset radio at whichever preset the current control state matches,
+ * falling back to "custom". Module scope so it can also run after loadSettings().
+ */
+function checkPresets() {
+    const isOverdraw = removeOverdrawInput.checked;
+    const isMerge = mergePathsInput.checked;
+    const fillStrategy = getFillStrategy();
+    const isWinding = fixWindingInput.checked; // Note: might be disabled/unchecked in plotter mode
+    const isSort = sortPathsInput.checked;
+
+    // Cutter Definition
+    const isCutter = isOverdraw && isMerge && fillStrategy === 'regions' && isWinding && isSort;
+
+    // Plotter Definition
+    // Note: fixWinding input is unchecked in plotter mode.
+    // We strictly check the inputs state here.
+    const isPlotter = isOverdraw && isMerge && fillStrategy === 'none' && !isWinding && isSort; // Plotter mode forces Sort internally, but UI should reflect desired state
+
+    const match = isCutter ? 'cutter' : isPlotter ? 'plotter' : 'custom';
+    const radio = document.querySelector(`input[name="preset"][value="${match}"]`) as HTMLInputElement;
+    if (radio) radio.checked = true;
+}
+
 // Setup control inputs
 function setupControls() {
     // Gap tolerance slider
@@ -236,35 +260,7 @@ function setupControls() {
 
         // Trigger updates
         autoOptimize();
-    };
-
-    // Check which preset matches current settings
-    const checkPresets = () => {
-        const isOverdraw = removeOverdrawInput.checked;
-        const isMerge = mergePathsInput.checked;
-        const fillStrategy = getFillStrategy();
-        const isWinding = fixWindingInput.checked; // Note: might be disabled/unchecked in plotter mode
-        const isSort = sortPathsInput.checked;
-
-        // Cutter Definition
-        const isCutter = isOverdraw && isMerge && fillStrategy === 'regions' && isWinding && isSort;
-
-        // Plotter Definition
-        // Note: fixWinding input is unchecked in plotter mode. 
-        // We strictly check the inputs state here.
-        const isPlotter = isOverdraw && isMerge && fillStrategy === 'none' && !isWinding && isSort; // Plotter mode forces Sort internally, but UI should reflect desired state
-
-        // Update Radios
-        if (isCutter) {
-            const r = document.querySelector('input[name="preset"][value="cutter"]') as HTMLInputElement;
-            if (r) r.checked = true;
-        } else if (isPlotter) {
-            const r = document.querySelector('input[name="preset"][value="plotter"]') as HTMLInputElement;
-            if (r) r.checked = true;
-        } else {
-            const r = document.querySelector('input[name="preset"][value="custom"]') as HTMLInputElement;
-            if (r) r.checked = true;
-        }
+        saveSettings();
     };
 
     // Preset Listener
@@ -281,6 +277,7 @@ function setupControls() {
     const onSettingChange = () => {
         autoOptimize();
         checkPresets();
+        saveSettings();
     };
 
     mergePathsInput.addEventListener('change', onSettingChange);
@@ -290,7 +287,10 @@ function setupControls() {
     fixWindingInput.addEventListener('change', onSettingChange);
 
     // Not part of any preset - re-parses the source SVG, so just re-run
-    discardPageRectsInput.addEventListener('change', autoOptimize);
+    discardPageRectsInput.addEventListener('change', () => {
+        autoOptimize();
+        saveSettings();
+    });
 
     // Layer by depth checkbox - need to re-render preview when changed
     layerByDepthInput.addEventListener('change', () => {
@@ -518,8 +518,29 @@ function loadSettings() {
             if (s.layerByDepth !== undefined) layerByDepthInput.checked = s.layerByDepth;
             if (s.customWidth) customWidthInput.value = s.customWidth;
             if (s.customHeight) customHeightInput.value = s.customHeight;
+
+            // Optimization controls. Without these the UI snaps back to the
+            // markup defaults (which are the Cutter preset) on every reload.
+            if (s.removeOverdraw !== undefined) removeOverdrawInput.checked = s.removeOverdraw;
+            if (s.mergePaths !== undefined) mergePathsInput.checked = s.mergePaths;
+            if (s.sortPaths !== undefined) sortPathsInput.checked = s.sortPaths;
+            if (s.fixWinding !== undefined) fixWindingInput.checked = s.fixWinding;
+            if (s.discardPageRects !== undefined) discardPageRectsInput.checked = s.discardPageRects;
+            if (s.gapTolerance) {
+                gapToleranceInput.value = s.gapTolerance;
+                gapValueSpan.textContent = `${s.gapTolerance}px`;
+            }
+            if (s.fillStrategy) {
+                const radio = document.querySelector(
+                    `input[name="fillStrategy"][value="${s.fillStrategy}"]`
+                ) as HTMLInputElement;
+                if (radio) radio.checked = true;
+            }
         } catch (e) { console.error('Failed to load settings', e); }
     }
+
+    // Derive the preset radio from the restored control state
+    checkPresets();
 }
 
 function saveSettings() {
@@ -531,7 +552,16 @@ function saveSettings() {
         rotateOutput: rotateOutputInput.checked,
         layerByDepth: layerByDepthInput.checked,
         customWidth: customWidthInput.value,
-        customHeight: customHeightInput.value
+        customHeight: customHeightInput.value,
+
+        // Optimization controls
+        removeOverdraw: removeOverdrawInput.checked,
+        mergePaths: mergePathsInput.checked,
+        sortPaths: sortPathsInput.checked,
+        fixWinding: fixWindingInput.checked,
+        discardPageRects: discardPageRectsInput.checked,
+        gapTolerance: gapToleranceInput.value,
+        fillStrategy: getFillStrategy()
     };
     sessionStorage.setItem('watertight_settings', JSON.stringify(s));
 }
