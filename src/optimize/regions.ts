@@ -5,7 +5,8 @@
  * formed by intersecting line segments. This is the "Flash-style"
  * fill algorithm that finds regions even from rough sketches.
  * 
- * Designed for Rust/WASM portability - no DOM dependencies.
+ * No DOM dependencies - this runs in the optimization Web Worker and under
+ * Node in the test suite.
  */
 
 import type { Path, Point } from '../geometry/types';

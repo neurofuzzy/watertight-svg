@@ -1,0 +1,41 @@
+name: Deploy to GitHub Pages
+
+# Publishes the built app to the gh-pages branch, which is this repo's Pages
+# source. Pushing that branch is what triggers GitHub's own generated
+# "pages-build-deployment" run - that workflow is synthesized by GitHub and
+# never exists in this folder.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Needed to push the built output to the gh-pages branch
+permissions:
+  contents: write
+
+# Never let two deploys race to publish gh-pages
+concurrency:
+  group: deploy-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test
+        run: npx vitest run
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to gh-pages
+        run: npx gh-pages -d dist -u "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"

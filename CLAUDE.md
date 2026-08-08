@@ -15,23 +15,16 @@ npm test               # vitest in WATCH mode
 npx vitest run         # single run (use this in agent workflows)
 npx vitest run src/tests/nesting.test.ts        # one file
 npx vitest run -t "plotter"                     # one test by name
-npm run deploy         # build + gh-pages -d dist
+npm run deploy         # build + gh-pages -d dist (manual; CI does this on merge to main)
 ```
 
 The full suite takes ~20s; `region-finding.test.ts` alone runs the algorithm over five sample SVGs (up to 25k segments) and dominates that time.
 
-### WASM
+There is no native/WASM component. A Rust port of the region finder existed until it was removed as unused — see "Deploy" below if you are wondering why CI installs no toolchain.
 
-The Rust crate in `wasm/` is a port of the region-finding algorithm. Both output packages are gitignored, so they must be built locally before anything that uses them works:
+### Deploy
 
-```bash
-npm run wasm:build     # --target web -> src/wasm-pkg      (browser)
-cd wasm && wasm-pack build --target nodejs --out-dir ../src/wasm-pkg-node   # needed by region-finding.test.ts
-```
-
-Requires `wasm-pack` and a Rust toolchain. `region-finding.test.ts` degrades gracefully (skips WASM comparisons) if `src/wasm-pkg-node` is missing.
-
-**Important:** the WASM path is *not* wired into the running app. `src/optimize/wasm-bridge.ts` and `src/optimize/regions-wasm.ts` exist but nothing imports them — the pipeline calls the TypeScript `findRegions` directly. WASM is currently only exercised by tests (~2x faster than TS). Treat the Rust code in `wasm/src/` as a parallel implementation that must be kept behaviorally identical to `src/optimize/regions.ts` + `src/geometry/{dcel,intersection,quadtree-ish}` if you touch either side.
+`.github/workflows/deploy.yml` builds and publishes `dist/` to the `gh-pages` branch on every push to `main`. That push is what triggers GitHub's own generated `pages-build-deployment` run — that workflow is synthesized by GitHub and will never appear in `.github/workflows`, which is not a bug.
 
 ## Architecture
 
@@ -65,7 +58,7 @@ Everything is flattened to `Path { points: Point[], closed: boolean, meta? }` (`
 
 ### Region finding
 
-`src/optimize/regions.ts` builds a DCEL (`src/geometry/dcel.ts`) from intersection-split segments and extracts bounded faces. Intersections come from `src/geometry/intersection.ts`, which uses spatial indexing (quadtree in Rust, `spatial-hash.ts` in TS) rather than brute force. This whole subtree is intentionally DOM-free and written to be portable to Rust.
+`src/optimize/regions.ts` builds a DCEL (`src/geometry/dcel.ts`) from intersection-split segments and extracts bounded faces. Intersections come from `src/geometry/intersection.ts`, which uses `spatial-hash.ts` rather than brute force. This whole subtree is intentionally DOM-free — it has to run in the worker and under Node in tests.
 
 ### Nesting / layers
 
@@ -85,4 +78,4 @@ Rotation, scale-to-fit (`src/optimize/scale.ts`), pen-weight injection, and laye
 
 ## Samples
 
-`samples/*.svg` are graded difficulty fixtures (easy → medium → hard → hardest → hurt-me) used both for manual testing and as test inputs. `region-finding.test.ts` prints a TS-vs-WASM timing/coverage table for them.
+`samples/*.svg` are graded difficulty fixtures (easy → medium → hard → hardest → hurt-me) used both for manual testing and as test inputs. `region-finding.test.ts` asserts region counts against a known-good baseline for each (see `EXPECTED_REGIONS`) and prints a coverage/timing table.

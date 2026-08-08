@@ -26,8 +26,7 @@
     "preview": "vite preview",
     "test": "vitest",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist",
-    "wasm:build": "cd wasm && wasm-pack build --target web --out-dir ../src/wasm-pkg"
+    "deploy": "gh-pages -d dist"
   },
   "devDependencies": {
     "@types/jsdom": "^27.0.0",

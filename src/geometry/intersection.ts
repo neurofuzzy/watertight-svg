@@ -2,7 +2,8 @@
  * Segment Intersection - Find all intersection points between line segments
  * 
  * Uses a simplified sweep line algorithm for finding intersections.
- * Designed for Rust/WASM portability - no DOM dependencies.
+ * No DOM dependencies - this runs in the optimization Web Worker and under
+ * Node in the test suite.
  */
 
 import type { Point } from './types';
