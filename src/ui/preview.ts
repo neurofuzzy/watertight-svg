@@ -26,8 +26,14 @@ const defaultOptions: PreviewOptions = {
     drawColor: '#e0e0e8',
     travelColor: 'rgba(255, 80, 255, 0.5)',
     fillColor: 'rgba(130, 180, 255, 0.35)',
-    strokeWidth: 1.5,
 };
+
+/**
+ * Preview strokes are cosmetic, so they scale with the document rather than being
+ * fixed in user units - a 1.5 unit stroke is hairline on a 600px viewBox but a
+ * quarter of the page on an inch-based one (viewBox="0 0 5.83 8.27").
+ */
+const STROKE_DIVISOR = 400;
 
 /**
  * Render an SVG document to a container element.
@@ -38,7 +44,15 @@ export function renderPreview(
     options: PreviewOptions = {},
     layers?: Map<number, Path[]>
 ): SVGSVGElement {
-    const opts = { ...defaultOptions, ...options };
+    const docSize = Math.max(doc.width, doc.height);
+    const opts = {
+        ...defaultOptions,
+        strokeWidth: (docSize > 0 ? docSize : 600) / STROKE_DIVISOR,
+        ...options,
+    };
+
+    // Dash pattern is in user units too, so it has to track the stroke
+    const dashArray = `${opts.strokeWidth * 2.7} ${opts.strokeWidth * 1.3}`;
 
     // Clear container
     container.innerHTML = '';
@@ -91,7 +105,7 @@ export function renderPreview(
                 travelLine.setAttribute('y2', String(start.y));
                 travelLine.setAttribute('stroke', opts.travelColor!);
                 travelLine.setAttribute('stroke-width', String(opts.strokeWidth! * 1.5)); // Thicker
-                travelLine.setAttribute('stroke-dasharray', '4 2');
+                travelLine.setAttribute('stroke-dasharray', dashArray);
                 travelGroup.appendChild(travelLine);
 
                 // Pen Up (Lift) Point - Blue Circle at lastPoint
