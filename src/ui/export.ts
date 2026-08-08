@@ -5,6 +5,26 @@
 import type { Path, SVGDocument } from '../geometry/types';
 
 /**
+ * Stroke colour per nesting depth, so each exported layer is distinguishable
+ * in Inkscape and can be assigned its own pen or cut setting.
+ */
+const LAYER_COLORS = [
+    '#FF0000', // Red
+    '#0000FF', // Blue
+    '#008000', // Green
+    '#FF7F00', // Orange
+    '#4B0082', // Indigo
+];
+
+function getLayerColor(depth: number): string {
+    // Depth 0 holds open paths that were never classified - keep it neutral
+    if (depth === 0) return '#333333';
+
+    // Depth is 1-based for actual nesting levels
+    return LAYER_COLORS[(depth - 1) % LAYER_COLORS.length];
+}
+
+/**
  * Export an SVGDocument back to an SVG string.
  * Combines all closed paths into a single path element with evenodd fill-rule
  * to correctly render holes (matching the preview renderer).
@@ -23,7 +43,7 @@ export function exportSVG(
         const groups: string[] = [];
         for (const depth of sortedDepths) {
             const paths = layers.get(depth)!;
-            const pathElements = pathsToSVGElements(paths);
+            const pathElements = pathsToSVGElements(paths, getLayerColor(depth));
 
             // Create Inkscape Layer Group
             // Depth 0 is usually "Open Paths" or "Background"
@@ -58,8 +78,11 @@ ${content}
 /**
  * Helper to convert a list of paths to SVG string elements
  * (Extracted from original exportSVG)
+ *
+ * `strokeColor` overrides each path's own stroke, used by the layered export so
+ * every path in a layer shares that layer's colour. Omitted for flat export.
  */
-function pathsToSVGElements(paths: Path[]): string[] {
+function pathsToSVGElements(paths: Path[], strokeColor?: string): string[] {
     // Separate closed and open paths
     const closedPaths = paths.filter(p => p.closed && p.points.length >= 3);
     const openPaths = paths.filter(p => !p.closed || p.points.length < 3);
@@ -80,11 +103,12 @@ function pathsToSVGElements(paths: Path[]): string[] {
         // Note: For layered export, we might want individual paths if the user plans to edit them?
         // But for cutting, a combined path is usually fine.
         // Let's stick to the combined path for consistency with preview/original logic.
-        elements.push(`<path d="${d}" fill="none" stroke="black" stroke-width="${strokeWidth}" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round" />`);
+        elements.push(`<path d="${d}" fill="none" stroke="${strokeColor ?? 'black'}" stroke-width="${strokeWidth}" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round" />`);
     }
 
-    // Export open paths individually
-    elements.push(...openPaths.map(pathToSVGPath));
+    // Export open paths individually. These are the whole drawing in plotter
+    // mode, so they need the layer colour too - not just the closed shapes.
+    elements.push(...openPaths.map(path => pathToSVGPath(path, strokeColor)));
 
     return elements;
 }
@@ -92,7 +116,7 @@ function pathsToSVGElements(paths: Path[]): string[] {
 /**
  * Convert a Path to an SVG path element string.
  */
-function pathToSVGPath(path: Path): string {
+function pathToSVGPath(path: Path, strokeColor?: string): string {
     if (path.points.length < 2) return '';
 
     // Build path data
@@ -101,7 +125,10 @@ function pathToSVGPath(path: Path): string {
     // Build attributes
     const attrs: string[] = [`d="${d}"`];
 
-    if (path.meta?.stroke) {
+    if (strokeColor) {
+        // Layered export: the layer's colour wins over the source stroke
+        attrs.push(`stroke="${strokeColor}"`);
+    } else if (path.meta?.stroke) {
         attrs.push(`stroke="${path.meta.stroke}"`);
     } else {
         attrs.push('stroke="black"');
