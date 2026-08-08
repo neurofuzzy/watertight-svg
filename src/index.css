@@ -1009,3 +1009,69 @@ input:checked+.slider:before {
 .preset-label input[type="radio"]:checked:hover + .preset-bubble {
   color: white;
 }
+
+/* Plot Modal (AxiDraw over WebSerial) */
+.plot-hint {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin: 0 0 var(--space-sm);
+}
+
+.plot-status {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-sm);
+  min-height: 1.2em;
+}
+
+.plot-status.is-error {
+  color: var(--error);
+}
+
+.plot-status.is-warning {
+  color: var(--warning);
+}
+
+/* The plot modal reuses .sim-scrubber-container for layout but has no range
+   input inside it, so it needs its own track behind the progress fill. */
+#plotModal .sim-scrubber-container::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+}
+
+#plotModal .sim-progress-bar {
+  transition: width 0.2s linear;
+}
+
+#plotModal select {
+  min-width: 220px;
+}
+
+.plot-firmware {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  margin-bottom: var(--space-sm);
+  word-break: break-word;
+}
+
+.plot-firmware:empty {
+  display: none;
+}
+
+.plot-firmware.is-warning {
+  color: var(--warning);
+}
+
+.plot-firmware.is-error {
+  color: var(--error);
+}

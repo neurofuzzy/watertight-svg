@@ -138,6 +138,8 @@
               <button type="button" id="pageSetupBtn" class="btn-secondary">Paper & Units</button>
               <button type="button" id="simulateBtn" class="btn-secondary" disabled>Simulate</button>
               <button type="button" id="exportBtn" class="btn-secondary" disabled>Export SVG</button>
+              <!-- Hidden unless navigator.serial exists (Chromium only) -->
+              <button type="button" id="plotBtn" class="btn-secondary hidden" disabled>Plot</button>
             </div>
           </div>
         </aside>
@@ -206,6 +208,94 @@
 
         <div class="modal-actions">
           <button id="closePageSetupBtn" class="btn-primary">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Plot Modal (AxiDraw over WebSerial) -->
+    <div id="plotModal" class="modal hidden">
+      <div class="modal-content settings-modal">
+        <button class="modal-close" id="closePlotBtn">&times;</button>
+        <h3>Plot to AxiDraw</h3>
+
+        <div class="control-group">
+          <div class="settings-row">
+            <label>Machine</label>
+            <!-- No default: the envelope is the only thing standing between a
+                 bad number and the end stops, so it must be chosen, not guessed. -->
+            <select id="plotMachine">
+              <option value="" selected>Select your machine…</option>
+              <option value="Mini">AxiDraw Mini (152 × 101 mm)</option>
+              <option value="V3">AxiDraw V3 / SE — A4 (280 × 218 mm)</option>
+              <option value="V3A3">AxiDraw V3/A3 / SE-A3 (430 × 297 mm)</option>
+              <option value="V3XL">AxiDraw V3 XL (595 × 218 mm)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="settings-row">
+            <label>Pen parks over</label>
+            <select id="plotHomeCorner">
+              <option value="top-left">Top-LEFT corner of the paper</option>
+              <option value="top-right" selected>Top-RIGHT corner of the paper</option>
+            </select>
+          </div>
+          <p class="plot-hint">
+            The machine only travels in +X and +Y from where it is homed, so this
+            decides which page edge X is measured from. Get it wrong and the
+            drawing runs off the sheet sideways.
+          </p>
+          <label>
+            <input type="checkbox" id="plotAutoOrient" checked />
+            Lay the paper's long edge along the gantry
+          </label>
+          <p class="plot-hint">
+            An AxiDraw's X travel is longer than its Y, so a portrait page often
+            only fits turned 90°. Rotates the plot when that is what makes it fit.
+          </p>
+        </div>
+
+        <div class="control-group">
+          <div class="settings-grid">
+            <div class="input-group-vertical">
+              <label class="input-label-sm">Pen down speed (<span id="plotSpeedDownMms">25 mm/s</span>)</label>
+              <input type="number" id="plotSpeedDown" min="1" max="100" step="1" value="50" />
+            </div>
+            <div class="input-group-vertical">
+              <label class="input-label-sm">Pen up speed (<span id="plotSpeedUpMms">100 mm/s</span>)</label>
+              <input type="number" id="plotSpeedUp" min="1" max="100" step="1" value="100" />
+            </div>
+            <div class="input-group-vertical">
+              <label class="input-label-sm">Pen down position</label>
+              <input type="number" id="plotPenDown" min="0" max="100" step="1" value="30" />
+            </div>
+            <div class="input-group-vertical">
+              <label class="input-label-sm">Pen up position</label>
+              <input type="number" id="plotPenUp" min="0" max="100" step="1" value="60" />
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <p class="plot-hint">
+            Park the pen at the top-left corner of the paper before plotting —
+            that position becomes the origin.
+          </p>
+          <div id="plotFirmware" class="plot-firmware"></div>
+          <div id="plotStatus" class="plot-status">Not connected.</div>
+          <div class="sim-scrubber-container">
+            <div class="sim-progress-bar" id="plotProgressBar"></div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="plotConnectBtn" class="btn-secondary">Connect</button>
+          <button id="plotMotorsBtn" class="btn-secondary" disabled>Release motors</button>
+          <button id="plotHomeBtn" class="btn-secondary" disabled>Return to origin</button>
+          <button id="plotHomeMachineBtn" class="btn-secondary" disabled>Home machine</button>
+          <button id="plotCancelBtn" class="btn-secondary hidden">Stop</button>
+          <button id="plotStartBtn" class="btn-primary" disabled>Plot</button>
         </div>
       </div>
     </div>

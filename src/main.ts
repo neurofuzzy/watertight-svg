@@ -13,6 +13,11 @@ import { downloadSVG } from './ui/export';
 import { PanZoomController } from './ui/panzoom';
 import { Simulator } from './ui/simulator';
 import { groupPathsByDepth } from './optimize/nesting';
+import {
+    isPlottingSupported, placeForMachine, PlotSession, speedToMms,
+    envelopeViolation, requestEbbPort, MACHINE_ENVELOPES, DEFAULT_PROFILE,
+    type Profile, type HomeCorner,
+} from './plot/plot';
 
 // DOM Elements
 const dropZone = document.getElementById('dropZone')!;
@@ -780,6 +785,7 @@ function handleOptimizationSuccess(result: OptimizeResult) {
     // Enable export & simulate
     exportBtn.removeAttribute('disabled');
     (document.getElementById('simulateBtn') as HTMLButtonElement).removeAttribute('disabled');
+    plotBtn.removeAttribute('disabled');
 
     // Log improvement
     const reduction = (
@@ -843,6 +849,7 @@ function setLoading(loading: boolean) {
         }
 
         exportBtn.setAttribute('disabled', 'true');
+        plotBtn.setAttribute('disabled', 'true');
         document.body.style.cursor = 'wait';
     } else {
         // Remove overlay
@@ -853,6 +860,78 @@ function setLoading(loading: boolean) {
         document.body.style.cursor = 'default';
     }
 }
+
+/** Geometry after the post-pipeline transforms, ready for a consumer. */
+interface PreparedOutput {
+    paths: Path[];
+    width: number;
+    height: number;
+    layers?: Map<number, Path[]>;
+    /**
+     * Unit that `paths`/`width`/`height` are expressed in, for consumers that
+     * need real-world measurements.
+     *
+     * `undefined` means millimetres. Scale-to-fit resolves everything into mm
+     * (`fitToPaper` maps into paper space), so this is only the document's own
+     * unit when scale-to-fit is off. Getting this backwards scales an inch
+     * document by 25.4 twice.
+     */
+    docUnits?: string;
+}
+
+/**
+ * Apply the post-pipeline transforms — rotation, scale-to-fit, layering — that
+ * live outside the worker.
+ *
+ * Shared by the simulator and the plotter so the two can't drift: whatever you
+ * watch on screen is the same geometry the pen draws. Export builds its own
+ * SVG document and so does this work inline instead.
+ */
+function prepareOutput(): PreparedOutput {
+    let paths = currentResult!.optimized.paths;
+    let width = currentResult!.optimized.width;
+    let height = currentResult!.optimized.height;
+
+    // Fallback if width/height missing
+    if (!width || !height) {
+        const viewPort = currentResult!.optimized.viewBox || { width: 800, height: 600 };
+        if (typeof viewPort === 'string') {
+            const parts = viewPort.split(' ').map(parseFloat);
+            if (parts.length === 4) { width = parts[2]; height = parts[3]; }
+        } else { width = viewPort.width; height = viewPort.height; }
+    }
+
+    // Apply transformations first
+    if (rotateOutputInput.checked) {
+        const rotated = rotatePaths(paths, width, height);
+        paths = rotated.paths;
+        width = rotated.width;
+        height = rotated.height;
+    }
+
+    // Apply Page Setup Scanning
+    let docUnits = currentResult!.optimized.units;
+    if (scaleToFitInput.checked) {
+        const { width: pWidth, height: pHeight } = getCurrentPaperSizeMM();
+        const marginMM = toMM(parseFloat(paperMarginInput.value));
+
+        const { paths: scaledPaths } = fitToPaper(paths, pWidth, pHeight, marginMM);
+        paths = scaledPaths;
+        width = pWidth;
+        height = pHeight;
+        // fitToPaper maps into paper space, which is mm by definition.
+        docUnits = undefined;
+    }
+
+    // Calculate layers once after all transformations
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(paths);
+    }
+
+    return { paths, width, height, layers, docUnits };
+}
+
 // Simulator Integration
 const simulateBtn = document.getElementById('simulateBtn') as HTMLButtonElement;
 const simulationModal = document.getElementById('simulationModal')!;
@@ -912,44 +991,7 @@ function initSimulator() {
         }
     }
 
-    // Load data
-    let paths = currentResult.optimized.paths;
-    let width = currentResult.optimized.width;
-    let height = currentResult.optimized.height;
-
-    // Fallback if width/height missing
-    if (!width || !height) {
-        const viewPort = currentResult.optimized.viewBox || { width: 800, height: 600 };
-        if (typeof viewPort === 'string') {
-            const parts = viewPort.split(' ').map(parseFloat);
-            if (parts.length === 4) { width = parts[2]; height = parts[3]; }
-        } else { width = viewPort.width; height = viewPort.height; }
-    }
-
-    // Apply transformations first
-    if (rotateOutputInput.checked) {
-        const rotated = rotatePaths(paths, width, height);
-        paths = rotated.paths;
-        width = rotated.width;
-        height = rotated.height;
-    }
-
-    // Apply Page Setup Scanning
-    if (scaleToFitInput.checked) {
-        const { width: pWidth, height: pHeight } = getCurrentPaperSizeMM();
-        const marginMM = toMM(parseFloat(paperMarginInput.value));
-
-        const { paths: scaledPaths } = fitToPaper(paths, pWidth, pHeight, marginMM);
-        paths = scaledPaths;
-        width = pWidth;
-        height = pHeight;
-    }
-
-    // Calculate layers once after all transformations
-    let layers: Map<number, Path[]> | undefined;
-    if (layerByDepthInput.checked) {
-        layers = groupPathsByDepth(paths);
-    }
+    const { paths, width, height, layers } = prepareOutput();
 
     const penWeight = parseFloat(penWeightInput.value);
     simulator.setData(paths, { width, height }, penWeight, scaleToFitInput.checked, layers);
@@ -1055,6 +1097,359 @@ function rotatePaths(paths: Path[], width: number, height: number): { paths: Pat
 
     return { paths: newPaths, width: newWidth, height: newHeight };
 }
+
+// ─── Plotter Integration (AxiDraw over WebSerial) ────────────────────────────
+
+const plotBtn = document.getElementById('plotBtn') as HTMLButtonElement;
+const plotModal = document.getElementById('plotModal')!;
+const closePlotBtn = document.getElementById('closePlotBtn')!;
+const plotMachineSelect = document.getElementById('plotMachine') as HTMLSelectElement;
+const plotHomeCornerSelect = document.getElementById('plotHomeCorner') as HTMLSelectElement;
+const plotAutoOrientInput = document.getElementById('plotAutoOrient') as HTMLInputElement;
+const plotSpeedDownInput = document.getElementById('plotSpeedDown') as HTMLInputElement;
+const plotSpeedUpInput = document.getElementById('plotSpeedUp') as HTMLInputElement;
+const plotPenDownInput = document.getElementById('plotPenDown') as HTMLInputElement;
+const plotPenUpInput = document.getElementById('plotPenUp') as HTMLInputElement;
+const plotStatus = document.getElementById('plotStatus')!;
+const plotFirmware = document.getElementById('plotFirmware')!;
+const plotProgressBar = document.getElementById('plotProgressBar')!;
+const plotConnectBtn = document.getElementById('plotConnectBtn') as HTMLButtonElement;
+const plotMotorsBtn = document.getElementById('plotMotorsBtn') as HTMLButtonElement;
+const plotCancelBtn = document.getElementById('plotCancelBtn') as HTMLButtonElement;
+const plotStartBtn = document.getElementById('plotStartBtn') as HTMLButtonElement;
+
+const plotHomeBtn = document.getElementById('plotHomeBtn') as HTMLButtonElement;
+const plotHomeMachineBtn = document.getElementById('plotHomeMachineBtn') as HTMLButtonElement;
+
+let plotSession: PlotSession | null = null;
+let plotAbort: AbortController | null = null;
+let motorsReleased = false;
+
+function setPlotStatus(msg: string, kind: 'info' | 'warning' | 'error' = 'info') {
+    plotStatus.textContent = msg;
+    plotStatus.classList.toggle('is-error', kind === 'error');
+    plotStatus.classList.toggle('is-warning', kind === 'warning');
+}
+
+const plotSpeedDownMms = document.getElementById('plotSpeedDownMms')!;
+const plotSpeedUpMms = document.getElementById('plotSpeedUpMms')!;
+
+/**
+ * Show what the percentages actually mean. They scale against nib's LM caps
+ * (50mm/s pen-down, 100mm/s pen-up) and are not comparable to the percentages
+ * in axicli, so the raw number tells you nothing on its own.
+ */
+function updatePlotSpeedLabels() {
+    const down = speedToMms(parseFloat(plotSpeedDownInput.value), true);
+    const up = speedToMms(parseFloat(plotSpeedUpInput.value), false);
+    plotSpeedDownMms.textContent = `${Number.isFinite(down) ? down.toFixed(0) : '–'} mm/s`;
+    plotSpeedUpMms.textContent = `${Number.isFinite(up) ? up.toFixed(0) : '–'} mm/s`;
+}
+
+plotSpeedDownInput.addEventListener('input', updatePlotSpeedLabels);
+plotSpeedUpInput.addEventListener('input', updatePlotSpeedLabels);
+
+function currentPlotProfile(): Profile {
+    return {
+        ...DEFAULT_PROFILE,
+        speedPendown: parseFloat(plotSpeedDownInput.value),
+        speedPenup: parseFloat(plotSpeedUpInput.value),
+        penPosDown: parseFloat(plotPenDownInput.value),
+        penPosUp: parseFloat(plotPenUpInput.value),
+    };
+}
+
+/**
+ * Warn when the page is larger than the machine can reach. The envelope is
+ * travel from wherever the arm is parked, so this can only ever be advisory —
+ * nib still enforces it per-move once plotting starts.
+ */
+/**
+ * Read the board's identity into the dialog.
+ *
+ * Always shows the raw `V` response, because a board answering with an
+ * unparseable string and a board not answering at all both end up as version
+ * 0.0.0 with every capability off — indistinguishable from genuinely old
+ * firmware unless you can see what it actually said.
+ */
+async function reportFirmware() {
+    if (!plotSession) return;
+    let raw: string;
+    try {
+        raw = (await plotSession.firmwareString()).trim();
+    } catch (e) {
+        plotFirmware.textContent =
+            `Board did not answer the V (version) command: ${e instanceof Error ? e.message : String(e)}`;
+        plotFirmware.classList.add('is-error');
+        return;
+    }
+    const caps = plotSession.capabilities;
+    const parsed = caps.firmware.join('.');
+    const lm = caps.lm
+        ? 'LM motion planning available.'
+        : 'No LM motion planning (needs 2.7.0) — every move falls back to SM, capped near 13mm/s.';
+    plotFirmware.textContent = `${raw} — parsed as ${parsed}. ${lm}`;
+    plotFirmware.classList.toggle('is-warning', !caps.lm);
+    plotFirmware.classList.remove('is-error');
+}
+
+/** Envelope for the selected machine, or null while none is chosen. */
+function selectedEnvelope() {
+    return MACHINE_ENVELOPES[plotMachineSelect.value] ?? null;
+}
+
+/**
+ * Gate plotting on the geometry actually fitting the machine.
+ *
+ * This blocks rather than warns. nib does check the envelope per-move, but by
+ * the time it aborts the carriage is already at the boundary — and if the
+ * selected machine is bigger than the real one, that check passes while the
+ * hardware runs into its end stops.
+ */
+function checkPlotFit(): boolean {
+    if (!currentResult) return false;
+
+    const envelope = selectedEnvelope();
+    if (!envelope) {
+        setPlotStatus('Select your machine — the envelope is the only bounds check.', 'warning');
+        plotStartBtn.disabled = true;
+        return false;
+    }
+
+    // Measure the real geometry, not the page: scale-to-fit centres content
+    // inside the sheet, so page size alone over-reports, and a rotated or
+    // unscaled document can extend past the page entirely.
+    const { paths, layers, docUnits, width, height } = prepareOutput();
+    const placement = placeForMachine(paths, {
+        units: docUnits, layers,
+        page: { width, height },
+        envelope,
+        homeCorner: plotHomeCornerSelect.value as HomeCorner,
+        autoOrient: plotAutoOrientInput.checked,
+    });
+    const strokes = placement.strokes;
+    const violation = envelopeViolation(strokes, envelope);
+
+    if (violation) {
+        const turnable = !plotAutoOrientInput.checked
+            ? ' Try laying the paper\'s long edge along the gantry.'
+            : '';
+        setPlotStatus(
+            `${violation} The machine reaches ${envelope.widthMm}×${envelope.heightMm}mm.` +
+            `${turnable} Reduce the paper size, or enable Scale to Fit.`,
+            'error',
+        );
+        plotStartBtn.disabled = true;
+        return false;
+    }
+
+    // Never let a rotation happen silently — it changes which way the drawing
+    // sits on the sheet, and the user has to load the paper to match.
+    const orientation = placement.rotated
+        ? `Rotated 90° to fit — load the paper landscape (${placement.page.widthMM.toFixed(0)}×${placement.page.heightMM.toFixed(0)}mm). `
+        : '';
+
+    plotStartBtn.disabled = !plotSession;
+    if (!plotSession) {
+        setPlotStatus(`${orientation}Not connected.`, placement.rotated ? 'warning' : 'info');
+        return true;
+    }
+
+    setPlotStatus(`${orientation}Connected. Park the pen, then plot.`,
+        placement.rotated ? 'warning' : 'info');
+    return true;
+}
+
+function setPlotConnectedUI(connected: boolean) {
+    plotMotorsBtn.disabled = !connected;
+    plotHomeMachineBtn.disabled = !connected;
+    // Returning to the origin is a relative move, so it is only offered while
+    // software tracking is still valid — never after a stopped plot.
+    plotHomeBtn.disabled = !connected || !plotSession?.positionTrusted || motorsReleased;
+    // Plot stays gated on the bounds check, never on connection alone.
+    plotStartBtn.disabled = true;
+    if (connected) checkPlotFit();
+}
+
+async function connectPlotter() {
+    try {
+        setPlotStatus('Waiting for device selection…');
+        await plotSession?.close().catch(() => undefined);
+        plotSession = new PlotSession(await requestEbbPort());
+        plotConnectBtn.textContent = 'Reconnect';
+        motorsReleased = false;
+        plotMotorsBtn.textContent = 'Release motors';
+        await reportFirmware();
+        setPlotConnectedUI(true);
+    } catch (e) {
+        plotSession = null;
+        setPlotConnectedUI(false);
+        // A user dismissing the browser's port picker throws; that is not an error.
+        const msg = e instanceof Error ? e.message : String(e);
+        setPlotStatus(/No port selected|cancel/i.test(msg) ? 'Not connected.' : msg, 'error');
+    }
+}
+
+async function runPlot() {
+    if (!currentResult || !plotSession) return;
+
+    const envelope = selectedEnvelope();
+    if (!envelope) {
+        setPlotStatus('Select your machine first.', 'error');
+        return;
+    }
+
+    const { paths, layers, docUnits, width, height } = prepareOutput();
+    const placement = placeForMachine(paths, {
+        units: docUnits, layers,
+        page: { width, height },
+        envelope,
+        homeCorner: plotHomeCornerSelect.value as HomeCorner,
+        autoOrient: plotAutoOrientInput.checked,
+    });
+    const strokes = placement.strokes;
+
+    if (strokes.length === 0) {
+        setPlotStatus('Nothing to plot.', 'error');
+        return;
+    }
+
+    // Re-check immediately before moving: page setup may have changed since the
+    // dialog opened, and this is the last point where nothing has moved yet.
+    const violation = envelopeViolation(strokes, envelope);
+    if (violation) {
+        setPlotStatus(`${violation} Refusing to plot.`, 'error');
+        plotStartBtn.disabled = true;
+        return;
+    }
+
+    plotAbort = new AbortController();
+    setPlotConnectedUI(false);
+    plotConnectBtn.disabled = true;
+    plotCancelBtn.classList.remove('hidden');
+    setPlotStatus(`Plotting ${strokes.length} strokes…`);
+
+    try {
+        const result = await plotSession.plot(strokes, {
+            profile: currentPlotProfile(),
+            envelope,
+            // The parser samples curves densely; without this a single curve
+            // becomes hundreds of LM commands.
+            simplifyMm: 0.05,
+            signal: plotAbort.signal,
+            onProgress: (fraction, etaS) => {
+                plotProgressBar.style.width = `${fraction * 100}%`;
+                const eta = Number.isFinite(etaS) && etaS > 0
+                    ? ` — ${Math.ceil(etaS / 60)} min left`
+                    : '';
+                setPlotStatus(`Plotting… ${Math.round(fraction * 100)}%${eta}`);
+            },
+        });
+        // A completed plot homes itself; a stopped one deliberately does not.
+        // After a stop the tracked position is stale, so the only trustworthy
+        // recovery is the firmware's absolute HM seek.
+        setPlotStatus(result.aborted
+            ? `Stopped at ${Math.round(result.stoppedAt * 100)}%. Arm position is no longer tracked — use Home machine.`
+            : 'Plot complete.',
+            result.aborted ? 'warning' : 'info');
+    } catch (e) {
+        setPlotStatus(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+        plotAbort = null;
+        setPlotConnectedUI(true);
+        plotConnectBtn.disabled = false;
+        plotCancelBtn.classList.add('hidden');
+    }
+}
+
+plotBtn.addEventListener('click', () => {
+    plotModal.classList.remove('hidden');
+    plotProgressBar.style.width = '0%';
+    updatePlotSpeedLabels();
+    checkPlotFit();
+});
+
+// Closing the dialog deliberately keeps the session open and the motors
+// energised: de-energising lets the arm drift, which would lose the origin the
+// user set by hand. Reopening resumes against the same machine state.
+closePlotBtn.addEventListener('click', () => {
+    plotModal.classList.add('hidden');
+});
+
+// WebSerial is Chromium-only. Rather than show a button that can never work in
+// Safari or Firefox, reveal it only where the API exists.
+if (isPlottingSupported()) {
+    plotBtn.classList.remove('hidden');
+}
+
+plotMachineSelect.addEventListener('change', checkPlotFit);
+plotHomeCornerSelect.addEventListener('change', checkPlotFit);
+plotAutoOrientInput.addEventListener('change', checkPlotFit);
+plotConnectBtn.addEventListener('click', connectPlotter);
+plotStartBtn.addEventListener('click', runPlot);
+plotCancelBtn.addEventListener('click', () => {
+    plotAbort?.abort();
+    setPlotStatus('Stopping…');
+});
+
+// Motors off lets the user drag the carriage to the paper corner by hand;
+// motors on re-arms and makes that position the origin.
+plotMotorsBtn.addEventListener('click', async () => {
+    if (!plotSession) return;
+    plotMotorsBtn.disabled = true;
+    try {
+        if (motorsReleased) {
+            await plotSession.reenableMotors();
+            motorsReleased = false;
+            plotMotorsBtn.textContent = 'Release motors';
+            setPlotStatus('Motors on — this position is now the origin.');
+        } else {
+            await plotSession.releaseMotors();
+            motorsReleased = true;
+            plotMotorsBtn.textContent = 'Set origin here';
+            setPlotStatus('Motors released — move the pen to the paper corner.');
+        }
+    } catch (e) {
+        setPlotStatus(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+        // With the motors off the arm can be dragged anywhere, so returning to
+        // the origin is meaningless until they are re-enabled.
+        setPlotConnectedUI(true);
+        plotMotorsBtn.disabled = false;
+    }
+});
+
+plotHomeBtn.addEventListener('click', async () => {
+    if (!plotSession) return;
+    plotHomeBtn.disabled = true;
+    try {
+        setPlotStatus('Returning to origin…');
+        await plotSession.home(currentPlotProfile(), selectedEnvelope() ?? undefined);
+        setPlotStatus('At origin.');
+    } catch (e) {
+        setPlotStatus(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+        setPlotConnectedUI(true);
+    }
+});
+
+plotHomeMachineBtn.addEventListener('click', async () => {
+    if (!plotSession) return;
+    plotHomeMachineBtn.disabled = true;
+    try {
+        setPlotStatus('Seeking machine home…');
+        await plotSession.homeMachine();
+        // HM redefines the origin as the machine's corner, so the paper origin
+        // the user parked by hand is gone.
+        motorsReleased = false;
+        plotMotorsBtn.textContent = 'Release motors';
+        setPlotStatus('At machine home. Origin is now the machine corner — re-park before plotting.', 'warning');
+    } catch (e) {
+        setPlotStatus(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+        setPlotConnectedUI(true);
+    }
+});
 
 // Start the app
 init();
