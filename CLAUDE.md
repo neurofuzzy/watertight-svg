@@ -39,6 +39,10 @@ Requires `wasm-pack` and a Rust toolchain. `region-finding.test.ts` degrades gra
 
 Everything is flattened to `Path { points: Point[], closed: boolean, meta? }` (`src/geometry/types.ts`). Curves, arcs, shapes — all sampled into polylines at parse time. There are no beziers anywhere past the parser.
 
+**Coordinates are always root-SVG viewBox space.** `getPointAtLength()` reports element-local coordinates, so the parser resolves each element's transform chain (`getRootMatrix`, derived from two `getScreenCTM()` calls) and lifts every sample into root space. Anything new that reads geometry off the DOM must do the same.
+
+**Do not assume user units are pixels.** A viewBox can be `0 0 800 600` or `0 0 5.83 8.27` (inches). Sampling density (parser), pipeline tolerances, and preview stroke widths are all derived from the document's largest dimension for this reason. `SVGDocument.units` carries the source unit through to export; it's `undefined` for unitless/px documents, which export as mm by convention.
+
 ### Threading split (matters for any change to parsing)
 
 `parseSVG` (`src/geometry/parser.ts`) uses **browser SVG DOM APIs** (`getTotalLength`/`getPointAtLength`) so it must run on the main thread. `src/main.ts` parses, then posts the plain `SVGDocument` to `src/worker.ts`, which runs `optimizeDocument` off-thread and posts back progress + result. Consequently:
@@ -51,7 +55,7 @@ Everything is flattened to `Path { points: Point[], closed: boolean, meta? }` (`
 
 `src/optimize/pipeline.ts::optimizeDocument` is the spine. Order is deliberate:
 
-1. Scale all geometry **up by 10x** (`SCALE`) to dodge float precision problems on small details; scale back down at the end. All tolerances inside the pipeline are expressed as `x * SCALE`, and user-supplied `gapTolerance` is scaled too. Any new tolerance must follow this convention.
+1. Normalize geometry into a **fixed working space**: the document's largest dimension is scaled to `REFERENCE_SIZE` (1000) and then by `BASE_SCALE` (10) for float headroom, so the working space is always ~10000 units wide regardless of whether the source viewBox is in pixels or inches. Scaled back down at the end. Every hard-coded tolerance is written as `x * BASE_SCALE` — i.e. in reference units, not document units. **Never write a bare tolerance or one based on `SCALE`**; that reintroduces the assumption that user units are pixels.
 2. Remove overdraw → split at intersections → remove overdraw again (the second pass catches partial overlaps only visible after splitting).
 3. Merge connected segments, then prune tiny paths and colinear points.
 4. Fill strategy: `findRegions` (bridge gaps → DCEL face extraction → winding fix) **or** `closePaths`, never both. Region finding *replaces* the path list; if it finds nothing it falls back to the bridged paths.
