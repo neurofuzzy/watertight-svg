@@ -23,5 +23,14 @@
     },
     "include": [
         "src"
+    ],
+    // These import src/wasm-pkg/, which `npm run wasm:build` generates and
+    // .gitignore excludes - so a fresh clone (and CI) has no such module.
+    // Nothing imports either file today; the pipeline calls the TypeScript
+    // findRegions directly. Skipping them keeps `npm run build` working from a
+    // clean checkout. Drop this once WASM is actually wired into the pipeline.
+    "exclude": [
+        "src/optimize/wasm-bridge.ts",
+        "src/optimize/regions-wasm.ts"
     ]
 }
