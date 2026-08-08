@@ -41,3 +41,26 @@ export function groupPathsByDepth(paths: Path[]): Map<number, Path[]> {
 
     return layers;
 }
+
+/**
+ * Get paths ordered by nesting depth for rendering.
+ * All paths in a layer are grouped together, layers are sorted by depth.
+ * 
+ * @param paths List of paths to order
+ * @returns Array of paths ordered by layer (depth 0, then 1, then 2, etc.)
+ */
+export function getPathsOrderedByLayer(paths: Path[]): Path[] {
+    const layers = groupPathsByDepth(paths);
+    const orderedPaths: Path[] = [];
+    
+    // Sort depth keys numerically (0, 1, 2, ...)
+    const sortedDepths = Array.from(layers.keys()).sort((a, b) => a - b);
+    
+    // Concatenate all paths in each layer in order
+    for (const depth of sortedDepths) {
+        const pathsInLayer = layers.get(depth)!;
+        orderedPaths.push(...pathsInLayer);
+    }
+    
+    return orderedPaths;
+}

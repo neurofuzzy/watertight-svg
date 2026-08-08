@@ -14,6 +14,16 @@ import { findRegions } from './regions';
 import { splitPathsAtIntersections } from '../geometry/intersection';
 // import { fitToPaper } from './scale';
 
+/**
+ * Working resolution of the optimization pipeline.
+ *
+ * Geometry is normalised so its largest dimension is REFERENCE_SIZE, then scaled by
+ * BASE_SCALE for float headroom. All hard-coded tolerances in this file are in
+ * REFERENCE_SIZE units, which makes them independent of the document's unit system.
+ */
+const REFERENCE_SIZE = 1000;
+const BASE_SCALE = 10;
+
 export interface OptimizeResult {
     /** Original parsed document */
     original: SVGDocument;
@@ -46,8 +56,14 @@ export function optimizeDocument(
 ): OptimizeResult {
     const beforeStats = calculateStats(original.paths);
 
-    // Scaling Factor to improve precision (10x)
-    const SCALE = 10;
+    // Every tolerance below is expressed in REFERENCE_SIZE units, so normalise the
+    // document into that space first. Without this, a document whose viewBox is in
+    // physical units (e.g. "0 0 5.83 8.27" for inches) would be obliterated: a 1.0
+    // "pixel" intersection-snapping tolerance would be a full inch of geometry.
+    // A document that is already ~1000 units wide is unaffected (SCALE stays 10).
+    const docSize = Math.max(original.width, original.height);
+    const normalize = docSize > 0 ? REFERENCE_SIZE / docSize : 1;
+    const SCALE = BASE_SCALE * normalize;
 
     // Scale UP geometry to avoid floating point issues with small details
     let paths = original.paths.map(p => scalePath(p, SCALE));
@@ -55,7 +71,11 @@ export function optimizeDocument(
     // Scale UP relevant tolerance options
     // We clone options to avoid mutating the original object
     const scaledOptions = { ...options };
-    scaledOptions.gapTolerance *= SCALE;
+
+    // The gap slider is a reference-space value, not a document-space one, so it
+    // maps into working space by BASE_SCALE alone. This keeps "bridge gaps this big
+    // relative to my drawing" consistent across documents of any unit system.
+    scaledOptions.gapTolerance *= BASE_SCALE;
 
     // "Plotter Mode" Optimization:
     // If we are Merging segments but NOT using any fill strategy (None),
@@ -76,7 +96,7 @@ export function optimizeDocument(
     // We do this BEFORE splitting intersections so we can identify duplicate paths 
     // while their topology is still intact.
     if (scaledOptions.removeOverdraw) {
-        paths = removeOverdraw(paths, 0.01 * SCALE); // Scaled tolerance
+        paths = removeOverdraw(paths, 0.01 * BASE_SCALE); // Scaled tolerance
         // Cleanup: Remove duplicate points that might have been created
         paths = pruneDuplicatePoints(paths);
     }
@@ -86,7 +106,7 @@ export function optimizeDocument(
     if (scaledOptions.splitIntersections) {
         // Only run this if we have paths left
         if (paths.length > 0) {
-            const SPLIT_TOLERANCE = 1.0 * SCALE; // 1 pixel tolerance for intersection snapping
+            const SPLIT_TOLERANCE = 1.0 * BASE_SCALE; // 1 reference unit of intersection snapping
             paths = splitPathsAtIntersections(paths, SPLIT_TOLERANCE) as Path[];
         }
     }
@@ -95,7 +115,7 @@ export function optimizeDocument(
     // After splitting, we might have new overlapping segments (e.g. partial overlaps)
     // capable of being removed now that they share vertices.
     if (scaledOptions.removeOverdraw) {
-        paths = removeOverdraw(paths, 0.01 * SCALE);
+        paths = removeOverdraw(paths, 0.01 * BASE_SCALE);
         paths = pruneDuplicatePoints(paths);
     }
 
@@ -103,15 +123,15 @@ export function optimizeDocument(
     if (scaledOptions.mergePaths) {
         // Use scaled tolerance for merging (e.g. 0.1 scaled pixels)
         // This ensures we don't fail to merge slightly drifted points
-        const MERGE_TOLERANCE = 0.1 * SCALE;
+        const MERGE_TOLERANCE = 0.1 * BASE_SCALE;
         paths = mergePaths(paths, MERGE_TOLERANCE);
     }
 
     // Step 2.5: Cleanup after merge
     // Remove tiny paths and merge colinear segments for cleaner geometry
-    const MIN_PATH_LENGTH = 0.1 * SCALE; // 0.1 pixel minimum
+    const MIN_PATH_LENGTH = 0.1 * BASE_SCALE; // 0.1 pixel minimum
     paths = removeTinyPaths(paths, MIN_PATH_LENGTH);
-    paths = mergeColinearPoints(paths, 0.01 * SCALE);
+    paths = mergeColinearPoints(paths, 0.01 * BASE_SCALE);
 
     // Step 3: Fill Strategy & Step 4: Fix Winding
     // We handle these together to optimize performance (only fixing winding on regions)
@@ -130,8 +150,8 @@ export function optimizeDocument(
         // Find enclosed regions (Flash-style fills)
         // Use STRICT tolerance to preserve geometry detail.
         // We rely on autoClosePaths + bridgeGaps above to bridge all gaps explicitly.
-        // 0.1 unscaled pixels -> 0.1 * SCALE in scaled space
-        const STRICT_TOLERANCE = 0.1 * SCALE;
+        // 0.1 reference units -> 0.1 * BASE_SCALE in working space
+        const STRICT_TOLERANCE = 0.1 * BASE_SCALE;
 
         let regions = findRegions(bridgedPaths, {
             tolerance: STRICT_TOLERANCE,
@@ -215,13 +235,14 @@ export function calculateStats(paths: Path[]): PathStats {
     }
 
     const travelDistance = calculateTravelDistance(paths);
-
+    
     return {
         pathCount: paths.length,
         segmentCount,
         totalLength,
         travelDistance,
         closedPaths,
+        layerCount: 1, // Default to 1, calculated at display time based on UI state
     };
 }
 
@@ -235,5 +256,6 @@ export function formatStats(stats: PathStats): string {
         `Draw: ${stats.totalLength.toFixed(1)}`,
         `Travel: ${stats.travelDistance.toFixed(1)}`,
         `Closed: ${stats.closedPaths}`,
+        `Layers: ${stats.layerCount}`,
     ].join(' | ');
 }

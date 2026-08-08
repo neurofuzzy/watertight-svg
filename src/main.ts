@@ -33,6 +33,7 @@ const gapToleranceInput = document.getElementById('gapTolerance') as HTMLInputEl
 const gapToleranceContainer = document.getElementById('gapToleranceContainer')!;
 const gapValueSpan = document.getElementById('gapValue')!;
 const fixWindingInput = document.getElementById('fixWinding') as HTMLInputElement;
+const discardPageRectsInput = document.getElementById('discardPageRects') as HTMLInputElement;
 
 // Page Setup Controls
 const pageSetupBtn = document.getElementById('pageSetupBtn')!;
@@ -148,6 +149,69 @@ function showPreview() {
     dropZone.style.padding = 'var(--space-md)';
 }
 
+// Update preview with current layer settings
+function updatePreviewWithCurrentLayers() {
+    if (!currentResult) return;
+
+    // Calculate layers if layer by depth is enabled
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(currentResult.optimized.paths);
+    }
+
+    // Check for Plotter Mode (Merge + None) to disable fill preview
+    const options = getOptions();
+    const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
+
+    renderPreview(optimizedPreview, currentResult.optimized, {
+        showTravel: true,
+        useLayerColors: layerByDepthInput.checked,
+        ...(isPlotterMode && { fillColor: 'none' })
+    }, layers);
+
+    // Re-attach pan/zoom controller to new SVG elements to maintain sync and state
+    const originalSvg = originalPreview.querySelector('svg');
+    const optimizedSvg = optimizedPreview.querySelector('svg');
+
+    if (originalSvg && optimizedSvg) {
+        // Pass false to preserve current zoom/pan state
+        panZoom.attach([originalSvg, optimizedSvg], false);
+    }
+
+    // Update optimized stats display with current layer count
+    const optimizedStatsWithLayers = { ...currentResult.afterStats };
+    if (layerByDepthInput.checked) {
+        optimizedStatsWithLayers.layerCount = layers ? layers.size : 1;
+    } else {
+        optimizedStatsWithLayers.layerCount = 1;
+    }
+    optimizedStats.textContent = formatStats(optimizedStatsWithLayers);
+}
+
+/**
+ * Point the preset radio at whichever preset the current control state matches,
+ * falling back to "custom". Module scope so it can also run after loadSettings().
+ */
+function checkPresets() {
+    const isOverdraw = removeOverdrawInput.checked;
+    const isMerge = mergePathsInput.checked;
+    const fillStrategy = getFillStrategy();
+    const isWinding = fixWindingInput.checked; // Note: might be disabled/unchecked in plotter mode
+    const isSort = sortPathsInput.checked;
+
+    // Cutter Definition
+    const isCutter = isOverdraw && isMerge && fillStrategy === 'regions' && isWinding && isSort;
+
+    // Plotter Definition
+    // Note: fixWinding input is unchecked in plotter mode.
+    // We strictly check the inputs state here.
+    const isPlotter = isOverdraw && isMerge && fillStrategy === 'none' && !isWinding && isSort; // Plotter mode forces Sort internally, but UI should reflect desired state
+
+    const match = isCutter ? 'cutter' : isPlotter ? 'plotter' : 'custom';
+    const radio = document.querySelector(`input[name="preset"][value="${match}"]`) as HTMLInputElement;
+    if (radio) radio.checked = true;
+}
+
 // Setup control inputs
 function setupControls() {
     // Gap tolerance slider
@@ -196,35 +260,7 @@ function setupControls() {
 
         // Trigger updates
         autoOptimize();
-    };
-
-    // Check which preset matches current settings
-    const checkPresets = () => {
-        const isOverdraw = removeOverdrawInput.checked;
-        const isMerge = mergePathsInput.checked;
-        const fillStrategy = getFillStrategy();
-        const isWinding = fixWindingInput.checked; // Note: might be disabled/unchecked in plotter mode
-        const isSort = sortPathsInput.checked;
-
-        // Cutter Definition
-        const isCutter = isOverdraw && isMerge && fillStrategy === 'regions' && isWinding && isSort;
-
-        // Plotter Definition
-        // Note: fixWinding input is unchecked in plotter mode. 
-        // We strictly check the inputs state here.
-        const isPlotter = isOverdraw && isMerge && fillStrategy === 'none' && !isWinding && isSort; // Plotter mode forces Sort internally, but UI should reflect desired state
-
-        // Update Radios
-        if (isCutter) {
-            const r = document.querySelector('input[name="preset"][value="cutter"]') as HTMLInputElement;
-            if (r) r.checked = true;
-        } else if (isPlotter) {
-            const r = document.querySelector('input[name="preset"][value="plotter"]') as HTMLInputElement;
-            if (r) r.checked = true;
-        } else {
-            const r = document.querySelector('input[name="preset"][value="custom"]') as HTMLInputElement;
-            if (r) r.checked = true;
-        }
+        saveSettings();
     };
 
     // Preset Listener
@@ -241,6 +277,7 @@ function setupControls() {
     const onSettingChange = () => {
         autoOptimize();
         checkPresets();
+        saveSettings();
     };
 
     mergePathsInput.addEventListener('change', onSettingChange);
@@ -248,6 +285,19 @@ function setupControls() {
     sortPathsInput.addEventListener('change', onSettingChange);
     gapToleranceInput.addEventListener('change', onSettingChange);
     fixWindingInput.addEventListener('change', onSettingChange);
+
+    // Not part of any preset - re-parses the source SVG, so just re-run
+    discardPageRectsInput.addEventListener('change', () => {
+        autoOptimize();
+        saveSettings();
+    });
+
+    // Layer by depth checkbox - need to re-render preview when changed
+    layerByDepthInput.addEventListener('change', () => {
+        updatePreviewWithCurrentLayers();
+        updatePageSettings();
+        saveSettings();
+    });
 
     // Fill Strategy Radios
     const fillRadios = document.querySelectorAll('input[name="fillStrategy"]');
@@ -261,6 +311,8 @@ function setupControls() {
         updatePageSettings();
         saveSettings();
     });
+
+
 
     // Custom Size Inputs
     customWidthInput.addEventListener('change', () => { updatePageSettings(); saveSettings(); });
@@ -302,28 +354,6 @@ function setupControls() {
         if (e.target === pageSetupModal) {
             pageSetupModal.classList.add('hidden');
         }
-    });
-
-    // Layer by depth setting change - update preview rendering only
-    layerByDepthInput.addEventListener('change', () => {
-        if (currentResult) {
-            // Check for Plotter Mode (Merge + None) to disable fill preview
-            const options = getOptions();
-            const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
-
-            // Compute layers for layer-based coloring if enabled
-            let layers: Map<number, Path[]> | undefined;
-            if (layerByDepthInput.checked) {
-                layers = groupPathsByDepth(currentResult.optimized.paths);
-            }
-
-            renderPreview(optimizedPreview, currentResult.optimized, {
-                showTravel: true,
-                ...(isPlotterMode && { fillColor: 'none' }),
-                ...(layers && { layers })
-            });
-        }
-        saveSettings();
     });
 }
 
@@ -450,6 +480,21 @@ function toMM(val: number): number {
     return currentUnit === 'in' ? val * 25.4 : val;
 }
 
+/**
+ * Convert a millimetre value into the unit the document will be exported in.
+ * Unrelated to toMM(), which converts the UI's mm/in toggle.
+ */
+function mmToDocUnits(val: number, units?: string): number {
+    switch (units) {
+        case 'in': return val / 25.4;
+        case 'cm': return val / 10;
+        case 'pt': return (val * 72) / 25.4;
+        case 'pc': return (val * 6) / 25.4;
+        case 'q': return val * 4;
+        default: return val; // mm, or unitless documents which we treat as mm
+    }
+}
+
 function loadSettings() {
     const saved = sessionStorage.getItem('watertight_settings');
     if (saved) {
@@ -473,8 +518,29 @@ function loadSettings() {
             if (s.layerByDepth !== undefined) layerByDepthInput.checked = s.layerByDepth;
             if (s.customWidth) customWidthInput.value = s.customWidth;
             if (s.customHeight) customHeightInput.value = s.customHeight;
+
+            // Optimization controls. Without these the UI snaps back to the
+            // markup defaults (which are the Cutter preset) on every reload.
+            if (s.removeOverdraw !== undefined) removeOverdrawInput.checked = s.removeOverdraw;
+            if (s.mergePaths !== undefined) mergePathsInput.checked = s.mergePaths;
+            if (s.sortPaths !== undefined) sortPathsInput.checked = s.sortPaths;
+            if (s.fixWinding !== undefined) fixWindingInput.checked = s.fixWinding;
+            if (s.discardPageRects !== undefined) discardPageRectsInput.checked = s.discardPageRects;
+            if (s.gapTolerance) {
+                gapToleranceInput.value = s.gapTolerance;
+                gapValueSpan.textContent = `${s.gapTolerance}px`;
+            }
+            if (s.fillStrategy) {
+                const radio = document.querySelector(
+                    `input[name="fillStrategy"][value="${s.fillStrategy}"]`
+                ) as HTMLInputElement;
+                if (radio) radio.checked = true;
+            }
         } catch (e) { console.error('Failed to load settings', e); }
     }
+
+    // Derive the preset radio from the restored control state
+    checkPresets();
 }
 
 function saveSettings() {
@@ -486,7 +552,16 @@ function saveSettings() {
         rotateOutput: rotateOutputInput.checked,
         layerByDepth: layerByDepthInput.checked,
         customWidth: customWidthInput.value,
-        customHeight: customHeightInput.value
+        customHeight: customHeightInput.value,
+
+        // Optimization controls
+        removeOverdraw: removeOverdrawInput.checked,
+        mergePaths: mergePathsInput.checked,
+        sortPaths: sortPathsInput.checked,
+        fixWinding: fixWindingInput.checked,
+        discardPageRects: discardPageRectsInput.checked,
+        gapTolerance: gapToleranceInput.value,
+        fillStrategy: getFillStrategy()
     };
     sessionStorage.setItem('watertight_settings', JSON.stringify(s));
 }
@@ -514,6 +589,7 @@ function setupButtons() {
             let width = currentResult.optimized.width;
             let height = currentResult.optimized.height;
             let viewBox = currentResult.optimized.viewBox;
+            let units = currentResult.optimized.units;
 
             // Apply Rotation if enabled
             if (rotateOutputInput.checked) {
@@ -533,11 +609,12 @@ function setupButtons() {
                 width = pWidth;
                 height = pHeight;
                 viewBox = `0 0 ${width} ${height}`;
+                // fitToPaper rewrites geometry into millimetre paper coordinates
+                units = 'mm';
             }
 
-            // Inject Pen Weight for Export (always pixels/unitless in SVG, but we usually want MM-equivalent)
-            // If the SVG size is in MM (which it is for custom/A4), then stroke-width should be in MM.
-            // Pen weight is always in mm
+            // Inject Pen Weight for Export. The slider is always in mm, but stroke-width
+            // is in user units, so convert into whatever unit the document is exported in.
             const penWeightMM = parseFloat(penWeightInput.value);
 
             // We need to apply this to all paths
@@ -545,7 +622,7 @@ function setupButtons() {
                 ...p,
                 meta: {
                     ...p.meta,
-                    strokeWidth: penWeightMM
+                    strokeWidth: mmToDocUnits(penWeightMM, units)
                 }
             }));
 
@@ -561,7 +638,8 @@ function setupButtons() {
                 paths,
                 width,
                 height,
-                viewBox
+                viewBox,
+                units
             };
 
             downloadSVG(docToExport, 'optimized.svg', layers);
@@ -628,7 +706,9 @@ function runOptimization() {
         const options = getOptions();
 
         // Parse SVG locally to use DOM APIs
-        const document = parseSVG(currentSVG);
+        const document = parseSVG(currentSVG, {
+            discardPageRects: discardPageRectsInput.checked,
+        });
 
         // Reset worker for new task (cancellation)
         createWorker();
@@ -652,6 +732,12 @@ function runOptimization() {
 function handleOptimizationSuccess(result: OptimizeResult) {
     currentResult = result;
 
+    // Calculate layers if layer by depth is enabled
+    let layers: Map<number, Path[]> | undefined;
+    if (layerByDepthInput.checked) {
+        layers = groupPathsByDepth(currentResult.optimized.paths);
+    }
+
     // Render previews
     renderPreview(originalPreview, currentResult.original, {
         showTravel: false,
@@ -662,17 +748,11 @@ function handleOptimizationSuccess(result: OptimizeResult) {
     const options = getOptions();
     const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
 
-    // Compute layers for layer-based coloring if enabled
-    let layers: Map<number, Path[]> | undefined;
-    if (layerByDepthInput.checked) {
-        layers = groupPathsByDepth(currentResult.optimized.paths);
-    }
-
     renderPreview(optimizedPreview, currentResult.optimized, {
         showTravel: true,
-        ...(isPlotterMode && { fillColor: 'none' }),
-        ...(layers && { layers })
-    });
+        useLayerColors: layerByDepthInput.checked,
+        ...(isPlotterMode && { fillColor: 'none' })
+    }, layers);
 
     // Attach Pan/Zoom controller
     const originalSvg = originalPreview.querySelector('svg');
@@ -685,7 +765,17 @@ function handleOptimizationSuccess(result: OptimizeResult) {
 
     // Update stats
     originalStats.textContent = formatStats(currentResult.beforeStats);
-    optimizedStats.textContent = formatStats(currentResult.afterStats);
+
+    // Calculate layer count for optimized stats based on current UI state
+    const optimizedStatsWithLayers = { ...currentResult.afterStats };
+    if (layerByDepthInput.checked) {
+        const layers = groupPathsByDepth(currentResult.optimized.paths);
+        optimizedStatsWithLayers.layerCount = layers.size;
+    } else {
+        optimizedStatsWithLayers.layerCount = 1;
+    }
+
+    optimizedStats.textContent = formatStats(optimizedStatsWithLayers);
 
     // Enable export & simulate
     exportBtn.removeAttribute('disabled');
@@ -836,7 +926,7 @@ function initSimulator() {
         } else { width = viewPort.width; height = viewPort.height; }
     }
 
-    // Apply Rotation if enabled
+    // Apply transformations first
     if (rotateOutputInput.checked) {
         const rotated = rotatePaths(paths, width, height);
         paths = rotated.paths;
@@ -855,15 +945,14 @@ function initSimulator() {
         height = pHeight;
     }
 
-    const penWeight = parseFloat(penWeightInput.value);
-
-    // Compute layers for layer-based coloring if enabled
+    // Calculate layers once after all transformations
     let layers: Map<number, Path[]> | undefined;
     if (layerByDepthInput.checked) {
         layers = groupPathsByDepth(paths);
     }
 
-    simulator.setData(layers || paths, { width, height }, penWeight, scaleToFitInput.checked);
+    const penWeight = parseFloat(penWeightInput.value);
+    simulator.setData(paths, { width, height }, penWeight, scaleToFitInput.checked, layers);
 
     // Reset controls
     simScrubber.value = "0";

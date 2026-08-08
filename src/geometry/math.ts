@@ -67,6 +67,54 @@ export function reversePath(path: Path): Path {
     };
 }
 
+/**
+ * How many points to walk when estimating a tangent at a path endpoint.
+ * Splitting at intersections leaves very short stubs, so the immediately
+ * adjacent point is often too close to give a stable direction.
+ */
+const TANGENT_LOOKAHEAD_POINTS = 8;
+
+/**
+ * Unit vector pointing from one end of a path back into its interior.
+ *
+ * Walks up to TANGENT_LOOKAHEAD_POINTS points looking for one at least
+ * `minLength` away, so densely sampled curves and short stubs both give a
+ * usable direction. Returns null for degenerate paths.
+ *
+ * Note the direction convention: this always points *away* from the chosen
+ * endpoint. Callers wanting a direction of travel through that endpoint need
+ * to negate it (see sort.ts).
+ */
+export function outwardTangent(path: Path, atStart: boolean, minLength: number = 0): Point | null {
+    const pts = path.points;
+    if (pts.length < 2) return null;
+
+    const origin = atStart ? pts[0] : pts[pts.length - 1];
+    const limit = Math.min(TANGENT_LOOKAHEAD_POINTS, pts.length - 1);
+
+    let fallback: Point | null = null;
+
+    for (let step = 1; step <= limit; step++) {
+        const p = atStart ? pts[step] : pts[pts.length - 1 - step];
+        const dx = p.x - origin.x;
+        const dy = p.y - origin.y;
+        const len = Math.hypot(dx, dy);
+
+        if (len <= 1e-12) continue;
+
+        fallback = { x: dx / len, y: dy / len };
+        if (len >= minLength) return fallback;
+    }
+
+    return fallback;
+}
+
+/** Angle in radians between two unit vectors. Returns 0 if either is unknown. */
+export function angleBetween(a: Point | null, b: Point | null): number {
+    if (!a || !b) return 0;
+    return Math.acos(Math.min(1, Math.max(-1, a.x * b.x + a.y * b.y)));
+}
+
 /** Calculate bounding box of a path */
 export function pathBounds(path: Path): BoundingBox {
     if (path.points.length === 0) {

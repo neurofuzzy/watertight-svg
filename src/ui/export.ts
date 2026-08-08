@@ -41,12 +41,16 @@ export function exportSVG(
         content = pathsToSVGElements(doc.paths).join('\n  ');
     }
 
+    // Preserve the source document's physical units. Falling back to mm keeps the
+    // long-standing behaviour for unitless/pixel documents.
+    const units = doc.units || 'mm';
+
     return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg"
      xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-     viewBox="${viewBox}" 
-     width="${doc.width}mm" 
-     height="${doc.height}mm">
+     viewBox="${viewBox}"
+     width="${doc.width}${units}"
+     height="${doc.height}${units}">
 ${content}
 </svg>`;
 }

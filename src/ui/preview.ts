@@ -4,6 +4,7 @@
  */
 
 import type { SVGDocument, Path } from '../geometry/types';
+import { getPathsOrderedByLayer } from '../optimize/nesting';
 
 export interface PreviewOptions {
     /** Show travel paths (pen-up moves) */
@@ -16,8 +17,8 @@ export interface PreviewOptions {
     fillColor?: string;
     /** Stroke width */
     strokeWidth?: number;
-    /** Layer groups for depth-based coloring */
-    layers?: Map<number, Path[]>;
+    /** Use layer-based coloring instead of sequential coloring */
+    useLayerColors?: boolean;
 }
 
 const defaultOptions: PreviewOptions = {
@@ -25,8 +26,14 @@ const defaultOptions: PreviewOptions = {
     drawColor: '#e0e0e8',
     travelColor: 'rgba(255, 80, 255, 0.5)',
     fillColor: 'rgba(130, 180, 255, 0.35)',
-    strokeWidth: 1.5,
 };
+
+/**
+ * Preview strokes are cosmetic, so they scale with the document rather than being
+ * fixed in user units - a 1.5 unit stroke is hairline on a 600px viewBox but a
+ * quarter of the page on an inch-based one (viewBox="0 0 5.83 8.27").
+ */
+const STROKE_DIVISOR = 400;
 
 /**
  * Render an SVG document to a container element.
@@ -34,9 +41,18 @@ const defaultOptions: PreviewOptions = {
 export function renderPreview(
     container: HTMLElement,
     doc: SVGDocument,
-    options: PreviewOptions = {}
+    options: PreviewOptions = {},
+    layers?: Map<number, Path[]>
 ): SVGSVGElement {
-    const opts = { ...defaultOptions, ...options };
+    const docSize = Math.max(doc.width, doc.height);
+    const opts = {
+        ...defaultOptions,
+        strokeWidth: (docSize > 0 ? docSize : 600) / STROKE_DIVISOR,
+        ...options,
+    };
+
+    // Dash pattern is in user units too, so it has to track the stroke
+    const dashArray = `${opts.strokeWidth * 2.7} ${opts.strokeWidth * 1.3}`;
 
     // Clear container
     container.innerHTML = '';
@@ -57,11 +73,24 @@ export function renderPreview(
     travelGroup.setAttribute('id', 'travel');
     drawGroup.setAttribute('id', 'paths');
 
+    // Use layer-ordered paths when layer coloring is enabled
+    const pathsToRender = opts.useLayerColors ? getPathsOrderedByLayer(doc.paths) : doc.paths;
+    
+    // Create a map of path to layer depth if layer coloring is enabled
+    const pathToLayer = new Map<Path, number>();
+    if (opts.useLayerColors && layers) {
+        for (const [depth, paths] of layers) {
+            for (const path of paths) {
+                pathToLayer.set(path, depth);
+            }
+        }
+    }
+
     // Render travel paths first (underneath)
     if (opts.showTravel) {
         let lastPoint = { x: 0, y: 0 };
 
-        for (const path of doc.paths) {
+        for (const path of pathsToRender) {
             if (path.points.length === 0) continue;
 
             const start = path.points[0];
@@ -76,7 +105,7 @@ export function renderPreview(
                 travelLine.setAttribute('y2', String(start.y));
                 travelLine.setAttribute('stroke', opts.travelColor!);
                 travelLine.setAttribute('stroke-width', String(opts.strokeWidth! * 1.5)); // Thicker
-                travelLine.setAttribute('stroke-dasharray', '4 2');
+                travelLine.setAttribute('stroke-dasharray', dashArray);
                 travelGroup.appendChild(travelLine);
 
                 // Pen Up (Lift) Point - Blue Circle at lastPoint
@@ -136,21 +165,22 @@ export function renderPreview(
     ];
 
     // Render draw paths
-    const getPathDepth = (path: Path): number => {
-        if (!opts.layers) return 0;
-        for (const [depth, paths] of opts.layers) {
-            if (paths.includes(path)) return depth;
-        }
-        return 0; // fallback
-    };
-
     let drawIndex = 0;
-    for (const path of doc.paths) {
+    
+    for (const path of pathsToRender) {
         if (path.points.length < 2) continue;
 
-        const pathDepth = opts.layers ? getPathDepth(path) : drawIndex;
-        const strokeColor = PALETTE[pathDepth % PALETTE.length];
-        if (!opts.layers) drawIndex++;
+        let strokeColor: string;
+        if (opts.useLayerColors && pathToLayer.has(path)) {
+            const depth = pathToLayer.get(path)!;
+            strokeColor = PALETTE[depth % PALETTE.length];
+        } else {
+            // Default behavior: cycle by path index
+            strokeColor = PALETTE[drawIndex % PALETTE.length];
+        }
+        
+        // Always increment draw index to ensure proper fallback color cycling
+        drawIndex++;
 
         const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         const points = path.points.map(p => `${p.x},${p.y}`).join(' ');

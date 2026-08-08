@@ -61,6 +61,11 @@ export interface SVGDocument {
     paths: Path[];
     /** Original viewBox string if present */
     viewBox?: string;
+    /**
+     * Physical unit the width/height are expressed in ('mm', 'in', 'cm', ...).
+     * Absent for unitless or pixel documents, which are treated as mm on export.
+     */
+    units?: string;
 }
 
 /** Statistics about a set of paths */
@@ -75,6 +80,8 @@ export interface PathStats {
     travelDistance: number;
     /** Number of closed paths */
     closedPaths: number;
+    /** Number of nesting layers */
+    layerCount: number;
 }
 
 /** Optimization options */

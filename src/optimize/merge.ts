@@ -8,7 +8,7 @@
  */
 
 import type { Path, Point } from '../geometry/types';
-import { pointsEqual, pathStart, pathEnd, reversePath, distance } from '../geometry/math';
+import { pointsEqual, pathStart, pathEnd, reversePath, distance, outwardTangent, angleBetween } from '../geometry/math';
 import { SpatialHash } from '../geometry/spatial-hash';
 
 /**
@@ -60,6 +60,11 @@ function mergePass(chains: Path[], tolerance: number): number {
     let merges = 0;
     const toRemove = new Set<number>();
 
+    // Chains already grown during this pass. The spatial index still holds their
+    // pre-merge endpoints, so joining to one now would splice at a point it no
+    // longer has. They become available again next pass, once the index is rebuilt.
+    const mutated = new Set<number>();
+
     // Build endpoint index for fast lookup
     // Use heuristic cell size ~5x tolerance or min 10
     const cellSize = Math.max(tolerance * 10, 10);
@@ -102,7 +107,9 @@ function mergePass(chains: Path[], tolerance: number): number {
             i,
             toRemove,
             tolerance,
-            chains
+            chains,
+            false,
+            mutated
         );
 
         if (bestMatch) {
@@ -111,6 +118,7 @@ function mergePass(chains: Path[], tolerance: number): number {
             const merged = connectChains(chain, other, bestMatch.connectType, tolerance);
             chains[i] = merged;
             toRemove.add(bestMatch.chainIndex);
+            mutated.add(i);
             merges++;
             continue;
         }
@@ -123,7 +131,8 @@ function mergePass(chains: Path[], tolerance: number): number {
             toRemove,
             tolerance,
             chains,
-            true // looking for ends
+            true, // looking for ends
+            mutated
         );
 
         if (bestMatch) {
@@ -132,6 +141,7 @@ function mergePass(chains: Path[], tolerance: number): number {
             const merged = connectChains(other, chain, bestMatch.connectType, tolerance);
             chains[i] = merged;
             toRemove.add(bestMatch.chainIndex);
+            mutated.add(i);
             merges++;
         }
     }
@@ -155,11 +165,37 @@ interface MatchResult {
     chainIndex: number;
     connectType: 'end-to-start' | 'end-to-end' | 'start-to-start' | 'start-to-end';
     distance: number;
+    /** Ranking cost - lower is better. Dominated by the turn angle at the junction. */
+    cost: number;
 }
 
+/**
+ * Weight of endpoint distance relative to turn angle (radians) in the match cost.
+ * Small on purpose: distance only breaks ties between near-equally straight
+ * continuations, since every candidate is already within tolerance.
+ */
+const DISTANCE_WEIGHT = 0.1;
 
 /**
- * Find the best endpoint match for a given point using Spatial Hash
+ * Turn angle (radians) a pen would make passing through a junction, where both
+ * tangents point away from the junction into their own path.
+ *
+ * Travelling straight through means the two tangents are anti-parallel, so the
+ * turn is the angle between one tangent and the *negation* of the other: 0 for a
+ * perfectly straight continuation, pi for doubling back. Symmetric, so traversal
+ * direction doesn't matter.
+ */
+function turnAngle(a: Point | null, b: Point | null): number {
+    if (!a || !b) return 0; // Unknown heading - fall back to distance ranking
+    return angleBetween(a, b ? { x: -b.x, y: -b.y } : null);
+}
+
+/**
+ * Find the best endpoint match for a given point using Spatial Hash.
+ *
+ * Where several chains meet - the usual case at an intersection, once segments
+ * have been split there - the candidate needing the smallest heading change wins,
+ * so curves flow through crossings instead of turning onto the crossing curve.
  */
 function findBestEndpointMatch(
     point: Point,
@@ -168,9 +204,15 @@ function findBestEndpointMatch(
     excluded: Set<number>,
     tolerance: number,
     chains: Path[],
-    lookingForEnds: boolean = false
+    lookingForEnds: boolean = false,
+    mutated: Set<number> = new Set()
 ): MatchResult | null {
     let best: MatchResult | null = null;
+
+    // Heading of the chain we are extending, measured at the junction end.
+    // lookingForEnds means our junction is at our own start.
+    const ourChain = chains[excludeChain];
+    const ourTangent = outwardTangent(ourChain, lookingForEnds, tolerance);
 
     // Query neighbors
     // Query a region around the point + tolerance
@@ -184,6 +226,8 @@ function findBestEndpointMatch(
     for (const ep of candidates) {
         if (ep.chainIndex === excludeChain) continue;
         if (excluded.has(ep.chainIndex)) continue;
+        // Its indexed endpoints are stale - see `mutated` in mergePass
+        if (mutated.has(ep.chainIndex)) continue;
         // Check actual distance
         const dist = distance(point, ep.point);
         if (dist > tolerance) continue;
@@ -214,11 +258,18 @@ function findBestEndpointMatch(
             }
         }
 
-        if (!best || dist < best.distance) {
+        // Prefer the continuation that bends the least, using distance only to
+        // separate candidates of near-equal straightness.
+        const theirTangent = outwardTangent(chains[ep.chainIndex], ep.isStart, tolerance);
+        const turn = turnAngle(ourTangent, theirTangent);
+        const cost = turn + (dist / tolerance) * DISTANCE_WEIGHT;
+
+        if (!best || cost < best.cost) {
             best = {
                 chainIndex: ep.chainIndex,
                 connectType,
                 distance: dist,
+                cost,
             };
         }
     }
