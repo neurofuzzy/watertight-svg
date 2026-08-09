@@ -37,13 +37,18 @@ jobs:
       - name: Build
         run: npm run build
 
-      # gh-pages parses -u with an RFC 5322 address parser, which rejects the
-      # square brackets in the github-actions[bot] identity - in the display
-      # name *and* in the address local part, so no amount of quoting helps.
-      # Setting the identity in git instead sidesteps the parser: with -u
-      # omitted, gh-pages reads user.name/user.email from the working copy.
+      # Two gh-pages gotchas, both worked around here rather than fought:
+      #   1. Its -u flag parses the identity with an RFC 5322 address parser,
+      #      which rejects the square brackets in github-actions[bot]. Set the
+      #      identity in git instead; gh-pages reads it when -u is omitted.
+      #   2. It pushes from its own clone under node_modules/.cache, so it never
+      #      sees the credentials actions/checkout wrote into the workspace
+      #      repo's local config. Hand it an authenticated URL with -r.
       - name: Publish to gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          npx gh-pages -d dist
+          npx gh-pages -d dist \
+            -r "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
