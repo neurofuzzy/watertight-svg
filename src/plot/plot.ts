@@ -45,20 +45,6 @@ export function docUnitsToMM(units?: string): number {
     }
 }
 
-/**
- * Which corner of the paper the arm is parked over.
- *
- * The machine only ever moves in +X and +Y from wherever it is homed, so the
- * corner determines how page coordinates map onto machine coordinates. SVG
- * puts (0,0) at the top-left with Y increasing downward; if the pen is parked
- * over the paper's top-right instead, X has to be measured from the opposite
- * edge or the whole drawing runs off the sheet in X.
- *
- * This is a property of the physical setup, not the file, so it has to be
- * stated rather than inferred.
- */
-export type HomeCorner = 'top-left' | 'top-right';
-
 export interface ToStrokesOptions {
     /** Document unit from `SVGDocument.units`; undefined is treated as mm. */
     units?: string;
@@ -68,15 +54,6 @@ export interface ToStrokesOptions {
      * plot — every stroke then lands on layer 0.
      */
     layers?: Map<number, Path[]>;
-    /** Corner the pen is parked over. Defaults to top-left (axicli's convention). */
-    homeCorner?: HomeCorner;
-    /**
-     * Page width in mm. Required for `homeCorner: 'top-right'`, which measures
-     * X from the page's right edge — anchoring the *page* corner to home rather
-     * than the drawing's bounding box, so the placement does not shift when the
-     * paper size changes.
-     */
-    pageWidthMM?: number;
 }
 
 /** Page rectangle in mm. */
@@ -86,90 +63,53 @@ export interface Page {
 }
 
 /**
- * Rotate a placed stroke list 90° clockwise, carrying the page with it.
+ * Rotate a placed stroke list 90° counter-clockwise, carrying the page with it.
  *
- * `(x, y) -> (pageHeight - y, x)`, matching `rotatePaths` in main.ts. This is a
- * true rotation, not a mirror — the drawing reads the same way on the sheet,
- * it is just laid across the gantry instead of along it.
+ * `(x, y) -> (y, pageWidth - x)`. A true rotation, not a mirror. The page's
+ * original **top-right** corner lands on the new origin, which is what makes
+ * this the right direction: the machine homes at the origin, and turning a
+ * portrait sheet counter-clockwise onto the bed puts its top-right corner
+ * under the parked pen.
  */
-export function rotateStrokes(strokes: Stroke[], page: Page): { strokes: Stroke[]; page: Page } {
-    const h = page.heightMM;
+export function rotateStrokesCCW(strokes: Stroke[], page: Page): { strokes: Stroke[]; page: Page } {
+    const w = page.widthMM;
     return {
         strokes: strokes.map(s => ({
             ...s,
-            points: s.points.map(p => ({ x: h - p.y, y: p.x })),
+            points: s.points.map(p => ({ x: p.y, y: w - p.x })),
         })),
         page: { widthMM: page.heightMM, heightMM: page.widthMM },
     };
 }
 
 /**
- * Orient the page so its long edge runs along the machine's long axis.
+ * Lay the page landscape, always.
  *
- * An AxiDraw's X travel is the gantry and is usually the longer of the two —
- * the A4 model is 280x218, sized for US Letter *landscape*. A portrait Letter
- * page needs 279.4mm of Y against 218mm available and simply cannot be
- * plotted, while the same page turned 90° fits with millimetres to spare.
- *
- * Rotates only when it converts a page that does not fit into one that does,
- * so a page already fitting either way is left alone.
+ * An AxiDraw's X travel is the gantry and is the longer axis — the A4 model is
+ * 280x218, sized for US Letter *landscape*. Rather than deciding per-document
+ * whether a rotation is needed, portrait pages are simply turned 90°
+ * counter-clockwise every time. One rule, one orientation, nothing to
+ * configure and nothing to get wrong: the paper always goes on the bed the
+ * same way round.
  */
-export function orientToMachine(
+export function orientLandscape(
     strokes: Stroke[],
     page: Page,
-    envelope: Envelope,
 ): { strokes: Stroke[]; page: Page; rotated: boolean } {
-    const fits = (p: Page) => p.widthMM <= envelope.widthMm && p.heightMM <= envelope.heightMm;
-    if (fits(page)) return { strokes, page, rotated: false };
-
-    const turned = rotateStrokes(strokes, page);
-    if (fits(turned.page)) return { ...turned, rotated: true };
-
-    // Neither orientation fits; hand back the original so the caller's bounds
-    // check reports against what the user actually asked for.
-    return { strokes, page, rotated: false };
-}
-
-/**
- * Measure X from the page's right edge, for a pen parked over the top-right
- * corner. Applied after orientation, against the oriented page width.
- */
-export function anchorToCorner(
-    strokes: Stroke[],
-    page: Page,
-    corner: HomeCorner,
-): Stroke[] {
-    if (corner !== 'top-right') return strokes;
-    const w = page.widthMM;
-    return strokes.map(s => ({
-        ...s,
-        points: s.points.map(p => ({ x: w - p.x, y: p.y })),
-    }));
+    if (page.widthMM >= page.heightMM) return { strokes, page, rotated: false };
+    return { ...rotateStrokesCCW(strokes, page), rotated: true };
 }
 
 /**
  * Convert optimizer paths into nib strokes.
  *
- * Three things change: a closed path gets its first point repeated so the pen
+ * Two things change: a closed path gets its first point repeated so the pen
  * actually draws the final edge back to the start (nib strokes are open
- * polylines — `closed` has no representation), coordinates are scaled into
- * absolute mm, and X is measured from whichever page edge the arm is parked
- * over.
+ * polylines — `closed` has no representation), and coordinates are scaled into
+ * absolute mm.
  */
 export function pathsToStrokes(paths: Path[], options: ToStrokesOptions = {}): Stroke[] {
     const k = docUnitsToMM(options.units);
-    const flipX = options.homeCorner === 'top-right';
-
-    if (flipX && !(options.pageWidthMM! > 0)) {
-        throw new Error(
-            'pathsToStrokes: homeCorner "top-right" needs pageWidthMM to measure X ' +
-            'from the page\'s right edge.',
-        );
-    }
-    const pageW = options.pageWidthMM ?? 0;
-    const mapX = flipX
-        ? (x: number) => pageW - x * k
-        : (x: number) => x * k;
 
     // Invert the depth map once so lookup per path is O(1).
     const layerOf = new Map<Path, number>();
@@ -183,10 +123,10 @@ export function pathsToStrokes(paths: Path[], options: ToStrokesOptions = {}): S
     for (const path of paths) {
         if (path.points.length < 2) continue;
 
-        const points = path.points.map(p => ({ x: mapX(p.x), y: p.y * k }));
+        const points = path.points.map(p => ({ x: p.x * k, y: p.y * k }));
         if (path.closed) {
             const first = path.points[0];
-            points.push({ x: mapX(first.x), y: first.y * k });
+            points.push({ x: first.x * k, y: first.y * k });
         }
 
         strokes.push({ points, layer: layerOf.get(path) ?? 0 });
@@ -194,65 +134,38 @@ export function pathsToStrokes(paths: Path[], options: ToStrokesOptions = {}): S
     return strokes;
 }
 
-/**
- * Does the page fit the machine's travel, given the arm is parked at the
- * page's top-left corner?
- *
- * nib's envelope is travel *from the origin*, and the origin is wherever the
- * user parked the arm — not an absolute cage.
- */
-export function pageFitsMachine(
-    widthMM: number,
-    heightMM: number,
-    envelope: Envelope,
-): boolean {
-    return widthMM <= envelope.widthMm && heightMM <= envelope.heightMm;
-}
-
 export interface PlacementOptions {
     units?: string;
     layers?: Map<number, Path[]>;
     /** Page size in document units, as reported by `prepareOutput`. */
     page: { width: number; height: number };
-    envelope: Envelope;
-    homeCorner: HomeCorner;
-    /** Turn the page 90° when that is what makes it fit. Default true. */
-    autoOrient?: boolean;
 }
 
 export interface Placement {
     strokes: Stroke[];
-    /** Oriented page, in mm. */
+    /** Oriented page, in mm. Always landscape. */
     page: Page;
+    /** True when a portrait page was turned to get there. */
     rotated: boolean;
 }
 
 /**
- * Turn optimizer paths into machine-ready strokes.
+ * Turn optimizer paths into machine-ready strokes: convert to mm, then lay the
+ * page landscape.
  *
- * The order matters and is the whole point of this function existing: convert
- * to mm, then orient the page to the gantry, then anchor to the home corner.
- * Anchoring before orienting measures X from the wrong edge; the two
- * transforms do not commute.
+ * The page corner always lands on the machine origin, so there is nothing to
+ * configure — no home-corner setting, no orientation toggle. Load the paper
+ * landscape with its corner under the parked pen and it is correct.
  */
 export function placeForMachine(paths: Path[], options: PlacementOptions): Placement {
     const k = docUnitsToMM(options.units);
-    // Page-coordinate strokes: origin top-left, Y down, no corner flip yet.
     const base = pathsToStrokes(paths, { units: options.units, layers: options.layers });
     const page: Page = {
         widthMM: options.page.width * k,
         heightMM: options.page.height * k,
     };
 
-    const oriented = options.autoOrient === false
-        ? { strokes: base, page, rotated: false }
-        : orientToMachine(base, page, options.envelope);
-
-    return {
-        strokes: anchorToCorner(oriented.strokes, oriented.page, options.homeCorner),
-        page: oriented.page,
-        rotated: oriented.rotated,
-    };
+    return orientLandscape(base, page);
 }
 
 /** Extent of a stroke list in mm, measured from the origin. */
@@ -339,7 +252,10 @@ export interface PlotRunOptions {
      */
     simplifyMm?: number;
     onProgress?: (fraction: number, etaSeconds: number) => void;
+    /** Fires as the pen lands on stroke N, before it is drawn. */
     onPenDown?: (strokeIndex: number) => void;
+    /** Fires as the pen lifts off stroke N, before the travel to N+1. */
+    onPenUp?: (strokeIndex: number) => void;
     signal?: AbortSignal;
 }
 
@@ -365,7 +281,6 @@ export interface PlotResult {
 export class PlotSession {
     private backend: EBBBackend;
     private connected = false;
-    private trusted = true;
 
     constructor(transport: EbbTransport) {
         this.backend = new EBBBackend(transport);
@@ -429,9 +344,16 @@ export class PlotSession {
         if (options.onProgress) {
             emitter.on('progress', options.onProgress);
         }
+        // The events carry no index, so they are counted here. nib emits one of
+        // each per stroke, and pen:up only fires when the pen was actually
+        // down, so the two counters stay aligned with the stroke list.
         if (options.onPenDown) {
             let i = 0;
             emitter.on('pen:down', () => options.onPenDown!(i++));
+        }
+        if (options.onPenUp) {
+            let i = 0;
+            emitter.on('pen:up', () => options.onPenUp!(i++));
         }
 
         await this.ensureConnected();
@@ -442,9 +364,6 @@ export class PlotSession {
                 layer: options.layer,
                 simplifyMm: options.simplifyMm,
             });
-            // A completed plot homes itself, leaving tracking exact. An abort
-            // stops the arm mid-stroke without recording where it landed.
-            this.trusted = !result.aborted;
             return { aborted: result.aborted, stoppedAt: result.stoppedAt };
         } finally {
             emitter.removeAllListeners();
@@ -452,55 +371,6 @@ export class PlotSession {
             // the arm has to stay energised for home() to mean anything.
             await this.backend.liftPen().catch(() => undefined);
         }
-    }
-
-    /**
-     * True while the software-tracked position can be trusted.
-     *
-     * `runStroke` writes `currentX/currentY` only after a stroke finishes, and
-     * an abort returns early without writing — while the emergency stop halts
-     * the arm mid-motion. So after a stopped plot the tracked position is the
-     * end of the last *completed* stroke and the arm is somewhere else
-     * entirely. Any relative move from that state goes to the wrong place.
-     */
-    get positionTrusted(): boolean {
-        return this.trusted;
-    }
-
-    /**
-     * Lift the pen and travel back to the origin the user parked — a *relative*
-     * move, so it is only correct while `positionTrusted`.
-     *
-     * Takes a profile so the return can be planned as an accelerated LM move at
-     * pen-up speed. Without one the backend falls back to a constant-speed SM
-     * move capped at 13mm/s, which crawls across a large sheet.
-     */
-    async home(profile: Profile, envelope?: Envelope): Promise<void> {
-        await this.ensureConnected();
-        if (!this.trusted) {
-            throw new Error(
-                'Arm position is no longer tracked after a stopped plot. ' +
-                'Use Home machine, which seeks an absolute position.',
-            );
-        }
-        // A relative move computed from a bad position drives the carriage into
-        // the end stops, where it ratchets until something gives. If the tracked
-        // position is not somewhere the machine can actually be, it is wrong.
-        const { x, y } = this.backend.currentPosition;
-        if (envelope) {
-            const slack = 1;
-            if (x < -slack || y < -slack
-                || x > envelope.widthMm + slack || y > envelope.heightMm + slack) {
-                throw new Error(
-                    `Tracked position (${x.toFixed(0)}, ${y.toFixed(0)})mm is outside the ` +
-                    `machine's ${envelope.widthMm}×${envelope.heightMm}mm travel, so it cannot ` +
-                    `be right. Use Home machine instead.`,
-                );
-            }
-        }
-        // Cheap: SC register writes only, the servo does not move.
-        await this.backend.configureSession({ name: 'watertight', ...profile });
-        await this.backend.home();
     }
 
     /**
@@ -517,7 +387,6 @@ export class PlotSession {
     async homeMachine(): Promise<void> {
         await this.ensureConnected();
         await this.backend.homeMachine();
-        this.trusted = true;
     }
 
     /** De-energise the steppers so the arm can be positioned by hand. */
@@ -530,8 +399,6 @@ export class PlotSession {
     async reenableMotors(): Promise<void> {
         await this.ensureConnected();
         await this.backend.reenableMotors();
-        // Position is 0,0 by definition again.
-        this.trusted = true;
     }
 
     /** Park the pen up, release the motors, and close the serial port. */

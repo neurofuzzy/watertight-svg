@@ -69,6 +69,16 @@ Keep this list current — it is the diff to reapply when re-syncing.
    ambiguous between old firmware, a malformed answer, and a silent board.
    Upstream had no need: its CLI printed the version at connect time.
 
+10. **`ebb.ts`: `runMoves` waits the full settle window after a pen lift.**
+    Upstream sent SP, then slept only the part of `servoRaise + penDelayUp` not
+    covered by the upcoming travel, on the reasoning that a long travel leaves
+    the pen up "before the arm arrives". But the arm starts moving immediately,
+    so the nib is still touching for the first part of the move and drags a line
+    out of the stroke — precisely what `penDelayUp` exists to prevent. nib's own
+    `plotLiveStroke` already waits properly; only the batch path took the
+    shortcut. Removed `ACCEL_MAX_MMS2` from the imports with the dead
+    `travelLowerBoundMs` maths.
+
 Nothing in the protocol encoding or the planner was modified.
 
 ## Known upstream behaviour worth remembering
@@ -80,8 +90,9 @@ Not bugs to fix here, but things the UI has to work around:
   while `safeAbort` issues an emergency stop that halts the arm mid-motion. So
   after a stopped plot the tracked position is the end of the last *completed*
   stroke and the arm is elsewhere. Any relative move from there — including
-  `home()` — goes to the wrong place. Recover with `homeMachine()` (HM), which
-  is absolute. `PlotSession.positionTrusted` tracks this.
+  `home()` — goes to the wrong place. This is why `PlotSession` exposes only
+  `homeMachine()` (HM), which is absolute; there is deliberately no wrapper for
+  the relative `home()`.
 
 - **`progress` fires per stroke, valued over the *simplified* move list.**
   `simplifyMoves` rewrites the move array inside `runMoves` before any event

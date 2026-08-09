@@ -12,11 +12,11 @@ import { renderPreview } from './ui/preview';
 import { downloadSVG } from './ui/export';
 import { PanZoomController } from './ui/panzoom';
 import { Simulator } from './ui/simulator';
-import { groupPathsByDepth } from './optimize/nesting';
+import { groupPathsByDepth, getPathsOrderedByLayer } from './optimize/nesting';
 import {
     isPlottingSupported, placeForMachine, PlotSession, speedToMms,
     envelopeViolation, requestEbbPort, MACHINE_ENVELOPES, DEFAULT_PROFILE,
-    type Profile, type HomeCorner,
+    type Profile,
 } from './plot/plot';
 
 // DOM Elements
@@ -785,7 +785,6 @@ function handleOptimizationSuccess(result: OptimizeResult) {
     // Enable export & simulate
     exportBtn.removeAttribute('disabled');
     (document.getElementById('simulateBtn') as HTMLButtonElement).removeAttribute('disabled');
-    plotBtn.removeAttribute('disabled');
 
     // Log improvement
     const reduction = (
@@ -849,7 +848,6 @@ function setLoading(loading: boolean) {
         }
 
         exportBtn.setAttribute('disabled', 'true');
-        plotBtn.setAttribute('disabled', 'true');
         document.body.style.cursor = 'wait';
     } else {
         // Remove overlay
@@ -927,16 +925,98 @@ function prepareOutput(): PreparedOutput {
     let layers: Map<number, Path[]> | undefined;
     if (layerByDepthInput.checked) {
         layers = groupPathsByDepth(paths);
+        // Commit to layer draw order here rather than leaving each consumer to
+        // apply it. The simulator reorders internally when given layers; the
+        // plotter does not (nib plots strokes in the order handed to it). If
+        // they disagree, following a live plot syncs to the wrong stroke.
+        // Ordering once up front makes the simulator's own reorder a no-op.
+        paths = getPathsOrderedByLayer(paths);
     }
 
     return { paths, width, height, layers, docUnits };
 }
 
-// Simulator Integration
+/**
+ * Geometry for the simulator, in **machine space** — exactly the strokes the
+ * plotter will receive.
+ *
+ * The machine is the fixed frame: the gantry runs along the top of the view,
+ * +X to the right, +Y down, and home is always the top-left corner. The paper
+ * and the drawing move within that frame — turning 90° when the page is
+ * reoriented, and mirroring when the pen parks on the right-hand corner, since
+ * machine X then runs away from that corner. That mirroring is not a bug to
+ * hide: it is where the pen actually travels, which is the question the preview
+ * exists to answer.
+ *
+ * The path order matches `prepareOutput`, so `pathRange(n)` and the plotter's
+ * nth `pen:down` refer to the same stroke.
+ */
+function buildSimulatorView(): {
+    paths: Path[];
+    bounds: { width: number; height: number };
+    layers?: Map<number, Path[]>;
+    machine?: { x: number; y: number; width: number; height: number; origin: { x: number; y: number } };
+} {
+    const { paths, width, height, layers, docUnits } = prepareOutput();
+    const envelope = selectedEnvelope();
+    if (!envelope) {
+        return { paths, bounds: { width, height }, layers };
+    }
+
+    // The real corner: this is the geometry that goes to the board.
+    const placement = placeForMachine(paths, {
+        units: docUnits, layers,
+        page: { width, height },
+    });
+
+    // nib strokes are open polylines — a closed path already carries its
+    // repeated first point — so `closed: false` reproduces them exactly.
+    //
+    // This also pins the draw order, which the follow-along depends on:
+    // `setData` runs `getPathsOrderedByLayer` whenever layers are supplied, and
+    // that re-derives depth by ray casting. Open paths all classify as depth 0,
+    // so the reorder collapses to a single bucket and preserves this order.
+    // Colours still come from `placedLayers` below, which carries the real
+    // depths, so nothing is lost by the classification being trivial here.
+    const placedPaths: Path[] = placement.strokes.map(s => ({
+        points: s.points,
+        closed: false,
+    }));
+
+    // Rebuild the depth map against the new Path objects so layer colouring
+    // survives the conversion.
+    let placedLayers: Map<number, Path[]> | undefined;
+    if (layers) {
+        placedLayers = new Map();
+        placement.strokes.forEach((stroke, i) => {
+            const depth = stroke.layer ?? 0;
+            const group = placedLayers!.get(depth) ?? [];
+            group.push(placedPaths[i]);
+            placedLayers!.set(depth, group);
+        });
+    }
+
+    // Bed and sheet both start at the machine origin, which is the top-left of
+    // the view. Everything the machine can reach is +X/+Y from there.
+    return {
+        paths: placedPaths,
+        bounds: { width: placement.page.widthMM, height: placement.page.heightMM },
+        layers: placedLayers,
+        machine: {
+            x: 0,
+            y: 0,
+            width: envelope.widthMm,
+            height: envelope.heightMm,
+            origin: { x: 0, y: 0 },
+        },
+    };
+}
+
+// Simulator Integration — the preview lives inside the Plot dialog, so the
+// settings that determine paper placement are visible next to their effect.
 const simulateBtn = document.getElementById('simulateBtn') as HTMLButtonElement;
-const simulationModal = document.getElementById('simulationModal')!;
-const closeSimBtn = document.getElementById('closeSimBtn')!;
 const simCanvas = document.getElementById('simCanvas') as HTMLCanvasElement;
+const plotEmpty = document.getElementById('plotEmpty')!;
 const simPlayPauseBtn = document.getElementById('simPlayPause')!;
 const playIcon = simPlayPauseBtn.querySelector('.play-icon')!;
 const pauseIcon = simPlayPauseBtn.querySelector('.pause-icon')!;
@@ -950,74 +1030,91 @@ const simTravelCheckbox = document.getElementById('simTravel') as HTMLInputEleme
 let simulator: Simulator | null = null;
 let isUserScrubbing = false;
 
-function initSimulator() {
-    if (!currentResult) return;
+/** Create the WebGL simulator once. Returns false if WebGL is unavailable. */
+function ensureSimulator(): boolean {
+    if (simulator) return true;
+    try {
+        simulator = new Simulator(simCanvas);
 
-    // Show modal
-    simulationModal.classList.remove('hidden');
+        simulator.onProgress = (percent, timeStr) => {
+            // Update scrubber only if user isn't dragging it
+            if (!isUserScrubbing) {
+                simScrubber.value = (percent * 100).toString();
+            }
+            simProgressBar.style.width = `${percent * 100}%`;
+            simTime.textContent = timeStr;
+        };
 
-    // Init Simulator if needed
-    if (!simulator) {
-        try {
-            simulator = new Simulator(simCanvas);
+        simulator.onComplete = () => {
+            updatePlayPauseIcon(false);
+        };
 
-            // Wire up callbacks
-            simulator.onProgress = (percent, timeStr) => {
-                // Update scrubber only if user isn't dragging it
-                if (!isUserScrubbing) {
-                    simScrubber.value = (percent * 100).toString();
-                }
-                // Update progress bar visual
-                simProgressBar.style.width = `${percent * 100}%`;
-                // Update time display
-                simTime.textContent = timeStr;
-            };
-
-            simulator.onComplete = () => {
-                updatePlayPauseIcon(false);
-            };
-
-            // Resize observer to handle modal transitions
-            const observer = new ResizeObserver(() => {
-                simulator?.resize();
-            });
-            observer.observe(simulationModal.querySelector('.sim-canvas-container')!);
-
-        } catch (e) {
-            console.error('Failed to init simulator:', e);
-            alert('WebGL not supported or initialization failed');
-            simulationModal.classList.add('hidden');
-            return;
-        }
+        // Fires when the dialog first becomes visible — `.hidden` is
+        // display:none, so the canvas has no size until then.
+        const observer = new ResizeObserver(() => {
+            simulator?.resize();
+        });
+        observer.observe(plotModal.querySelector('.sim-canvas-container')!);
+        return true;
+    } catch (e) {
+        console.error('Failed to init simulator:', e);
+        return false;
     }
+}
 
-    const { paths, width, height, layers } = prepareOutput();
+/**
+ * Rebuild the preview from current settings.
+ *
+ * Called on open and after every settings change, so the effect of picking a
+ * machine or flipping the home corner is visible immediately rather than
+ * discovered on paper. Playback position is preserved by default; pass
+ * `progress` to force one (1 = the finished plot, the print-preview state).
+ */
+function refreshPreview(progress?: number) {
+    if (!currentResult || !simulator) return;
 
+    const keep = progress ?? parseFloat(simScrubber.value) / 100;
+    const view = buildSimulatorView();
     const penWeight = parseFloat(penWeightInput.value);
-    simulator.setData(paths, { width, height }, penWeight, scaleToFitInput.checked, layers);
 
-    // Reset controls
-    simScrubber.value = "0";
-    simProgressBar.style.width = "0%";
-    simSpeedSelect.value = "10";
-    simulator.setSpeed(10);
-
-    // Wire up blots toggle
-    simBlotsCheckbox.addEventListener('change', () => {
-        simulator?.setBlots(simBlotsCheckbox.checked);
-    });
-    // Wire up travel toggle
-    simTravelCheckbox.addEventListener('change', () => {
-        simulator?.setTravel(simTravelCheckbox.checked);
-    });
-
-    // Initial state
+    simulator.setData(
+        view.paths, view.bounds, penWeight,
+        // Always outline the sheet in machine view: it is the whole point of
+        // showing the footprint, and it no longer depends on scale-to-fit.
+        view.machine ? true : scaleToFitInput.checked,
+        view.layers, view.machine,
+    );
     simulator.setBlots(simBlotsCheckbox.checked);
     simulator.setTravel(simTravelCheckbox.checked);
+    simulator.setSpeed(parseFloat(simSpeedSelect.value));
+    simulator.syncTo(Number.isFinite(keep) ? keep : 1);
+    updatePlayPauseIcon(false);
 
-    // Auto-play
-    simulator.play();
-    updatePlayPauseIcon(true);
+    renderLegend(view);
+}
+
+/** Prompt shown over an empty bed until a machine is chosen. */
+function renderLegend(view: ReturnType<typeof buildSimulatorView>) {
+    plotEmpty.classList.toggle('hidden', !!view.machine);
+}
+
+/** Open the unified Preview & Plot dialog. */
+function openPlotDialog() {
+    if (!currentResult) return;
+    plotModal.classList.remove('hidden');
+
+    if (!ensureSimulator()) {
+        alert('WebGL not supported or initialization failed');
+        plotModal.classList.add('hidden');
+        return;
+    }
+
+    simSpeedSelect.value = '10';
+    // Open on the finished plot: this is a print preview first, an animation
+    // second.
+    refreshPreview(1);
+    updatePlotSpeedLabels();
+    checkPlotFit();
 }
 
 function updatePlayPauseIcon(isPlaying: boolean) {
@@ -1031,13 +1128,15 @@ function updatePlayPauseIcon(isPlaying: boolean) {
 }
 
 // Event Listeners for Simulator
-simulateBtn.addEventListener('click', initSimulator);
+simulateBtn.addEventListener('click', openPlotDialog);
 
-closeSimBtn.addEventListener('click', () => {
-    simulationModal.classList.add('hidden');
-    if (simulator) {
-        simulator.pause();
-    }
+// Registered once at module scope. These used to live inside the open handler,
+// which stacked a fresh listener every time the dialog was opened.
+simBlotsCheckbox.addEventListener('change', () => {
+    simulator?.setBlots(simBlotsCheckbox.checked);
+});
+simTravelCheckbox.addEventListener('change', () => {
+    simulator?.setTravel(simTravelCheckbox.checked);
 });
 
 simPlayPauseBtn.addEventListener('click', () => {
@@ -1100,12 +1199,14 @@ function rotatePaths(paths: Path[], width: number, height: number): { paths: Pat
 
 // ─── Plotter Integration (AxiDraw over WebSerial) ────────────────────────────
 
-const plotBtn = document.getElementById('plotBtn') as HTMLButtonElement;
 const plotModal = document.getElementById('plotModal')!;
+const plotConnectSection = document.getElementById('plotConnectSection')!;
+const plotActions = document.getElementById('plotActions')!;
 const closePlotBtn = document.getElementById('closePlotBtn')!;
 const plotMachineSelect = document.getElementById('plotMachine') as HTMLSelectElement;
-const plotHomeCornerSelect = document.getElementById('plotHomeCorner') as HTMLSelectElement;
-const plotAutoOrientInput = document.getElementById('plotAutoOrient') as HTMLInputElement;
+const plotFollowInput = document.getElementById('plotFollow') as HTMLInputElement;
+const plotDelayUpInput = document.getElementById('plotDelayUp') as HTMLInputElement;
+const plotDelayDownInput = document.getElementById('plotDelayDown') as HTMLInputElement;
 const plotSpeedDownInput = document.getElementById('plotSpeedDown') as HTMLInputElement;
 const plotSpeedUpInput = document.getElementById('plotSpeedUp') as HTMLInputElement;
 const plotPenDownInput = document.getElementById('plotPenDown') as HTMLInputElement;
@@ -1113,12 +1214,12 @@ const plotPenUpInput = document.getElementById('plotPenUp') as HTMLInputElement;
 const plotStatus = document.getElementById('plotStatus')!;
 const plotFirmware = document.getElementById('plotFirmware')!;
 const plotProgressBar = document.getElementById('plotProgressBar')!;
+const plotProgressWrap = document.getElementById('plotProgressWrap')!;
 const plotConnectBtn = document.getElementById('plotConnectBtn') as HTMLButtonElement;
 const plotMotorsBtn = document.getElementById('plotMotorsBtn') as HTMLButtonElement;
 const plotCancelBtn = document.getElementById('plotCancelBtn') as HTMLButtonElement;
 const plotStartBtn = document.getElementById('plotStartBtn') as HTMLButtonElement;
 
-const plotHomeBtn = document.getElementById('plotHomeBtn') as HTMLButtonElement;
 const plotHomeMachineBtn = document.getElementById('plotHomeMachineBtn') as HTMLButtonElement;
 
 let plotSession: PlotSession | null = null;
@@ -1156,7 +1257,138 @@ function currentPlotProfile(): Profile {
         speedPenup: parseFloat(plotSpeedUpInput.value),
         penPosDown: parseFloat(plotPenDownInput.value),
         penPosUp: parseFloat(plotPenUpInput.value),
+        // Settle time either side of a pen transition (axicli pen_delay_up /
+        // pen_delay_down). The servo's own travel is already accounted for by
+        // the SP duration; these are extra waits on top, for pens that need a
+        // moment to stop wobbling or to start flowing.
+        penDelayUp: parseFloat(plotDelayUpInput.value),
+        penDelayDown: parseFloat(plotDelayDownInput.value),
     };
+}
+
+/**
+ * Open the simulator alongside a running plot and hand back a seek function.
+ *
+ * Playback is driven entirely by the machine — `play()` is never called, so the
+ * simulated pen only advances when the real one does.
+ */
+interface FollowAlong {
+    penDown: (strokeIndex: number) => void;
+    penUp: (strokeIndex: number) => void;
+}
+
+/**
+ * Track a running plot in the preview.
+ *
+ * The machine owns the timeline: playback is never `play()`ed, it is advanced
+ * one leg at a time. Each leg is anchored by a real event and then animated at
+ * the profile's actual mm/s, so the pen moves continuously instead of jumping
+ * a stroke at a time — and any drift is corrected at the next boundary.
+ *
+ * Stroke ordinal is the only usable sync signal: nib's `progress` fraction is
+ * measured over the move list *after* `simplifyMoves` has rewritten it, which
+ * the caller never sees, whereas stroke count survives simplification.
+ */
+function openFollowAlong(): FollowAlong | null {
+    if (!simulator) return null;
+    const sim = simulator;
+
+    // Playback is machine-driven; manual controls would fight it.
+    simPlayPauseBtn.classList.add('hidden');
+    simScrubber.disabled = true;
+    sim.syncTo(0);
+
+    const profile = currentPlotProfile();
+    const penDownMms = speedToMms(profile.speedPendown, true);
+    const penUpMms = speedToMms(profile.speedPenup, false);
+
+    return {
+        // Pen has landed on stroke i: anchor at its start, draw it out.
+        penDown: (i) => {
+            const r = sim.pathRange(i);
+            if (!r) return;
+            sim.syncTo(r.start);
+            sim.followTo(r.end, penDownMms);
+        },
+        // Pen has lifted off stroke i: anchor at its end, travel to the next.
+        penUp: (i) => {
+            const r = sim.pathRange(i);
+            if (!r) return;
+            sim.syncTo(r.end);
+            const next = sim.pathRange(i + 1);
+            if (next) sim.followTo(next.start, penUpMms);
+        },
+    };
+}
+
+/** Restore manual playback controls after a followed plot. */
+function endFollowAlong() {
+    simPlayPauseBtn.classList.remove('hidden');
+    simScrubber.disabled = false;
+    simulator?.syncTo(1);
+    updatePlayPauseIcon(false);
+}
+
+// ─── Plot settings persistence ───────────────────────────────────────────────
+
+const PLOT_SETTINGS_KEY = 'watertight_plot_settings';
+
+/**
+ * Persist plot settings to localStorage rather than the sessionStorage used by
+ * page setup: machine model, home corner and pen calibration are properties of
+ * a physical rig that does not change between sessions, and re-picking them
+ * every time is exactly how a wrong envelope gets selected.
+ */
+function savePlotSettings() {
+    try {
+        localStorage.setItem(PLOT_SETTINGS_KEY, JSON.stringify({
+            machine: plotMachineSelect.value,
+            follow: plotFollowInput.checked,
+            speedDown: plotSpeedDownInput.value,
+            speedUp: plotSpeedUpInput.value,
+            penDown: plotPenDownInput.value,
+            penUp: plotPenUpInput.value,
+            delayUp: plotDelayUpInput.value,
+            delayDown: plotDelayDownInput.value,
+        }));
+    } catch {
+        // Private browsing or a full quota — settings just will not persist.
+    }
+}
+
+function loadPlotSettings() {
+    let s: Record<string, unknown>;
+    try {
+        const raw = localStorage.getItem(PLOT_SETTINGS_KEY);
+        if (!raw) return;
+        s = JSON.parse(raw);
+    } catch {
+        return;
+    }
+
+    const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+    const bool = (v: unknown) => (typeof v === 'boolean' ? v : undefined);
+
+    // Only restore a machine that still exists, so a renamed or removed option
+    // falls back to "choose one" rather than silently selecting the wrong rig.
+    const machine = str(s.machine);
+    if (machine && machine in MACHINE_ENVELOPES) plotMachineSelect.value = machine;
+
+    const follow = bool(s.follow);
+    if (follow !== undefined) plotFollowInput.checked = follow;
+
+    const num = (v: unknown, el: HTMLInputElement) => {
+        const n = typeof v === 'string' ? parseFloat(v) : NaN;
+        if (Number.isFinite(n)) el.value = String(n);
+    };
+    num(s.speedDown, plotSpeedDownInput);
+    num(s.speedUp, plotSpeedUpInput);
+    num(s.penDown, plotPenDownInput);
+    num(s.penUp, plotPenUpInput);
+    num(s.delayUp, plotDelayUpInput);
+    num(s.delayDown, plotDelayDownInput);
+
+    updatePlotSpeedLabels();
 }
 
 /**
@@ -1184,13 +1416,16 @@ async function reportFirmware() {
         return;
     }
     const caps = plotSession.capabilities;
-    const parsed = caps.firmware.join('.');
-    const lm = caps.lm
-        ? 'LM motion planning available.'
-        : 'No LM motion planning (needs 2.7.0) — every move falls back to SM, capped near 13mm/s.';
-    plotFirmware.textContent = `${raw} — parsed as ${parsed}. ${lm}`;
-    plotFirmware.classList.toggle('is-warning', !caps.lm);
     plotFirmware.classList.remove('is-error');
+    if (caps.lm) {
+        // Working as expected — no need to report it.
+        plotFirmware.textContent = '';
+        return;
+    }
+    plotFirmware.textContent =
+        `${raw} — parsed as ${caps.firmware.join('.')}. No LM motion planning ` +
+        `(needs 2.7.0); every move falls back to SM, capped near 13mm/s.`;
+    plotFirmware.classList.add('is-warning');
 }
 
 /** Envelope for the selected machine, or null while none is chosen. */
@@ -1223,49 +1458,30 @@ function checkPlotFit(): boolean {
     const placement = placeForMachine(paths, {
         units: docUnits, layers,
         page: { width, height },
-        envelope,
-        homeCorner: plotHomeCornerSelect.value as HomeCorner,
-        autoOrient: plotAutoOrientInput.checked,
     });
     const strokes = placement.strokes;
     const violation = envelopeViolation(strokes, envelope);
 
     if (violation) {
-        const turnable = !plotAutoOrientInput.checked
-            ? ' Try laying the paper\'s long edge along the gantry.'
-            : '';
         setPlotStatus(
-            `${violation} The machine reaches ${envelope.widthMm}×${envelope.heightMm}mm.` +
-            `${turnable} Reduce the paper size, or enable Scale to Fit.`,
+            `${violation} The machine reaches ${envelope.widthMm}×${envelope.heightMm}mm. ` +
+            `Reduce the paper size, or enable Scale to Fit.`,
             'error',
         );
         plotStartBtn.disabled = true;
         return false;
     }
 
-    // Never let a rotation happen silently — it changes which way the drawing
-    // sits on the sheet, and the user has to load the paper to match.
-    const orientation = placement.rotated
-        ? `Rotated 90° to fit — load the paper landscape (${placement.page.widthMM.toFixed(0)}×${placement.page.heightMM.toFixed(0)}mm). `
-        : '';
-
+    // Nothing wrong: say nothing. The status line only earns its space when
+    // there is a problem or a plot is running.
+    setPlotStatus('');
     plotStartBtn.disabled = !plotSession;
-    if (!plotSession) {
-        setPlotStatus(`${orientation}Not connected.`, placement.rotated ? 'warning' : 'info');
-        return true;
-    }
-
-    setPlotStatus(`${orientation}Connected. Park the pen, then plot.`,
-        placement.rotated ? 'warning' : 'info');
     return true;
 }
 
 function setPlotConnectedUI(connected: boolean) {
     plotMotorsBtn.disabled = !connected;
     plotHomeMachineBtn.disabled = !connected;
-    // Returning to the origin is a relative move, so it is only offered while
-    // software tracking is still valid — never after a stopped plot.
-    plotHomeBtn.disabled = !connected || !plotSession?.positionTrusted || motorsReleased;
     // Plot stays gated on the bounds check, never on connection alone.
     plotStartBtn.disabled = true;
     if (connected) checkPlotFit();
@@ -1279,6 +1495,7 @@ async function connectPlotter() {
         plotConnectBtn.textContent = 'Reconnect';
         motorsReleased = false;
         plotMotorsBtn.textContent = 'Release motors';
+        setPlotStatus('');
         await reportFirmware();
         setPlotConnectedUI(true);
     } catch (e) {
@@ -1286,7 +1503,7 @@ async function connectPlotter() {
         setPlotConnectedUI(false);
         // A user dismissing the browser's port picker throws; that is not an error.
         const msg = e instanceof Error ? e.message : String(e);
-        setPlotStatus(/No port selected|cancel/i.test(msg) ? 'Not connected.' : msg, 'error');
+        setPlotStatus(/No port selected|cancel/i.test(msg) ? '' : msg, 'error');
     }
 }
 
@@ -1303,9 +1520,6 @@ async function runPlot() {
     const placement = placeForMachine(paths, {
         units: docUnits, layers,
         page: { width, height },
-        envelope,
-        homeCorner: plotHomeCornerSelect.value as HomeCorner,
-        autoOrient: plotAutoOrientInput.checked,
     });
     const strokes = placement.strokes;
 
@@ -1327,7 +1541,11 @@ async function runPlot() {
     setPlotConnectedUI(false);
     plotConnectBtn.disabled = true;
     plotCancelBtn.classList.remove('hidden');
+    plotStartBtn.classList.add('hidden');
+    plotProgressWrap.classList.remove('hidden');
     setPlotStatus(`Plotting ${strokes.length} strokes…`);
+
+    const follow = plotFollowInput.checked ? openFollowAlong() : null;
 
     try {
         const result = await plotSession.plot(strokes, {
@@ -1344,6 +1562,11 @@ async function runPlot() {
                     : '';
                 setPlotStatus(`Plotting… ${Math.round(fraction * 100)}%${eta}`);
             },
+            // One pen:down per stroke. Stroke ordinal is the only sync signal
+            // that survives nib's move simplification, so index the simulator
+            // by it rather than by the progress fraction.
+            onPenDown: follow ? (i) => follow.penDown(i) : undefined,
+            onPenUp: follow ? (i) => follow.penUp(i) : undefined,
         });
         // A completed plot homes itself; a stopped one deliberately does not.
         // After a stop the tracked position is stale, so the only trustworthy
@@ -1356,35 +1579,45 @@ async function runPlot() {
         setPlotStatus(e instanceof Error ? e.message : String(e), 'error');
     } finally {
         plotAbort = null;
+        if (follow) endFollowAlong();
         setPlotConnectedUI(true);
         plotConnectBtn.disabled = false;
         plotCancelBtn.classList.add('hidden');
+        plotStartBtn.classList.remove('hidden');
+        plotProgressWrap.classList.add('hidden');
     }
 }
-
-plotBtn.addEventListener('click', () => {
-    plotModal.classList.remove('hidden');
-    plotProgressBar.style.width = '0%';
-    updatePlotSpeedLabels();
-    checkPlotFit();
-});
 
 // Closing the dialog deliberately keeps the session open and the motors
 // energised: de-energising lets the arm drift, which would lose the origin the
 // user set by hand. Reopening resumes against the same machine state.
 closePlotBtn.addEventListener('click', () => {
     plotModal.classList.add('hidden');
+    simulator?.pause();
 });
 
-// WebSerial is Chromium-only. Rather than show a button that can never work in
-// Safari or Firefox, reveal it only where the API exists.
-if (isPlottingSupported()) {
-    plotBtn.classList.remove('hidden');
+// WebSerial is Chromium-only. The dialog still works as a preview without it,
+// so only the parts that drive hardware are removed.
+if (!isPlottingSupported()) {
+    plotConnectSection.classList.add('hidden');
+    plotActions.classList.add('hidden');
 }
 
-plotMachineSelect.addEventListener('change', checkPlotFit);
-plotHomeCornerSelect.addEventListener('change', checkPlotFit);
-plotAutoOrientInput.addEventListener('change', checkPlotFit);
+for (const el of [
+    plotMachineSelect, plotFollowInput,
+    plotSpeedDownInput, plotSpeedUpInput, plotPenDownInput, plotPenUpInput,
+    plotDelayUpInput, plotDelayDownInput,
+]) {
+    el.addEventListener('change', () => {
+        savePlotSettings();
+        updatePlotSpeedLabels();
+        // Show the effect of the change on the paper straight away.
+        refreshPreview();
+        checkPlotFit();
+    });
+}
+
+loadPlotSettings();
 plotConnectBtn.addEventListener('click', connectPlotter);
 plotStartBtn.addEventListener('click', runPlot);
 plotCancelBtn.addEventListener('click', () => {
@@ -1416,20 +1649,6 @@ plotMotorsBtn.addEventListener('click', async () => {
         // the origin is meaningless until they are re-enabled.
         setPlotConnectedUI(true);
         plotMotorsBtn.disabled = false;
-    }
-});
-
-plotHomeBtn.addEventListener('click', async () => {
-    if (!plotSession) return;
-    plotHomeBtn.disabled = true;
-    try {
-        setPlotStatus('Returning to origin…');
-        await plotSession.home(currentPlotProfile(), selectedEnvelope() ?? undefined);
-        setPlotStatus('At origin.');
-    } catch (e) {
-        setPlotStatus(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-        setPlotConnectedUI(true);
     }
 });
 

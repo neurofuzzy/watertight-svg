@@ -3,11 +3,10 @@ import type { Path } from '../geometry/types';
 import {
     pathsToStrokes,
     docUnitsToMM,
-    pageFitsMachine,
     envelopeViolation,
     placeForMachine,
-    rotateStrokes,
-    orientToMachine,
+    rotateStrokesCCW,
+    orientLandscape,
     MACHINE_ENVELOPES,
 } from '../plot/plot';
 
@@ -78,16 +77,6 @@ describe('pathsToStrokes', () => {
     });
 });
 
-describe('pageFitsMachine', () => {
-    it('accepts a page inside the machine envelope', () => {
-        expect(pageFitsMachine(210, 297, MACHINE_ENVELOPES['V3A3'])).toBe(true);
-    });
-
-    it('rejects a page the arm cannot reach', () => {
-        expect(pageFitsMachine(420, 297, MACHINE_ENVELOPES['Mini'])).toBe(false);
-    });
-});
-
 describe('envelopeViolation', () => {
     const strokesSpanning = (w: number, h: number) => pathsToStrokes([{
         points: [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }],
@@ -130,151 +119,84 @@ describe('envelopeViolation', () => {
     });
 });
 
-describe('home corner anchoring', () => {
-    // A5 drawing, 148mm wide, sitting flush in the top-left of a 210mm page.
-    const drawing: Path = {
-        points: [{ x: 0, y: 0 }, { x: 148, y: 0 }, { x: 148, y: 100 }],
-        closed: false,
-    };
-
-    it('measures X from the left edge when parked top-left', () => {
-        const [s] = pathsToStrokes([drawing], { homeCorner: 'top-left' });
-        expect(s.points.map(p => p.x)).toEqual([0, 148, 148]);
-    });
-
-    it('measures X from the right edge when parked top-right', () => {
-        const [s] = pathsToStrokes([drawing], {
-            homeCorner: 'top-right', pageWidthMM: 210,
-        });
-        // The page's right edge is the origin, so the drawing's right edge sits
-        // 210-148 = 62mm from home and its left edge 210mm out.
-        expect(s.points.map(p => p.x)).toEqual([210, 62, 62]);
-    });
-
-    it('leaves Y untouched by the corner choice', () => {
-        const [s] = pathsToStrokes([drawing], {
-            homeCorner: 'top-right', pageWidthMM: 210,
-        });
-        expect(s.points.map(p => p.y)).toEqual([0, 0, 100]);
-    });
-
-    /**
-     * The anchor is the *page* corner, not the drawing's bounding box, so
-     * growing the paper must not move content that is already placed.
-     */
-    it('keeps content at a fixed offset from home as paper grows', () => {
-        const at = (w: number) =>
-            pathsToStrokes([drawing], { homeCorner: 'top-right', pageWidthMM: w })[0].points[0].x;
-        expect(at(210)).toBe(210);
-        expect(at(297)).toBe(297);
-        // Distance from the drawing's own right edge to home tracks the page.
-        expect(at(297) - 148).toBe(149);
-    });
-
-    it('refuses top-right without a page width rather than silently mirroring to 0', () => {
-        expect(() => pathsToStrokes([drawing], { homeCorner: 'top-right' }))
-            .toThrow(/pageWidthMM/);
-    });
-
-    it('applies unit conversion before the flip', () => {
-        const inches: Path = { points: [{ x: 0, y: 0 }, { x: 2, y: 0 }], closed: false };
-        const [s] = pathsToStrokes([inches], {
-            units: 'in', homeCorner: 'top-right', pageWidthMM: 210,
-        });
-        expect(s.points[0].x).toBeCloseTo(210);
-        expect(s.points[1].x).toBeCloseTo(210 - 50.8);
-    });
-});
-
-describe('orienting the page to the gantry', () => {
-    const LETTER_PORTRAIT = { width: 215.9, height: 279.4 };
-    const A4_MACHINE = MACHINE_ENVELOPES['V3'];   // 280 x 218, sized for Letter landscape
-
+describe('laying the page landscape', () => {
     // Full-bleed page outline, so the strokes span exactly the sheet.
     const fullPage = (w: number, h: number): Path => ({
         points: [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }],
         closed: true,
     });
 
-    it('rotateStrokes turns the page without mirroring it', () => {
-        const s = pathsToStrokes([{ points: [{ x: 0, y: 0 }, { x: 10, y: 0 }], closed: false }]);
-        const { strokes, page } = rotateStrokes(s, { widthMM: 100, heightMM: 200 });
+    it('rotates counter-clockwise, mapping the top-right corner onto the origin', () => {
+        // A single point at the page's top-right.
+        const s = pathsToStrokes([{
+            points: [{ x: 100, y: 0 }, { x: 100, y: 10 }], closed: false,
+        }]);
+        const { strokes, page } = rotateStrokesCCW(s, { widthMM: 100, heightMM: 200 });
         expect(page).toEqual({ widthMM: 200, heightMM: 100 });
-        // (0,0) -> (200,0) and (10,0) -> (200,10): the segment stays 10mm long.
-        expect(strokes[0].points).toEqual([{ x: 200, y: 0 }, { x: 200, y: 10 }]);
+        // (100,0) is the top-right corner, and lands on the machine origin —
+        // which is what makes anticlockwise the correct direction.
+        expect(strokes[0].points[0]).toEqual({ x: 0, y: 0 });
+        expect(strokes[0].points[1]).toEqual({ x: 10, y: 0 });
+    });
+
+    it('preserves lengths — a rotation, not a scale or mirror', () => {
+        const s = pathsToStrokes([{ points: [{ x: 0, y: 0 }, { x: 30, y: 40 }], closed: false }]);
+        const { strokes } = rotateStrokesCCW(s, { widthMM: 100, heightMM: 200 });
+        const [a, b] = strokes[0].points;
+        expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeCloseTo(50);
+    });
+
+    it('turns a portrait page', () => {
+        const r = orientLandscape(pathsToStrokes([fullPage(216, 279)]), { widthMM: 216, heightMM: 279 });
+        expect(r.rotated).toBe(true);
+        expect(r.page).toEqual({ widthMM: 279, heightMM: 216 });
+    });
+
+    it('leaves a landscape page alone', () => {
+        const r = orientLandscape(pathsToStrokes([fullPage(279, 216)]), { widthMM: 279, heightMM: 216 });
+        expect(r.rotated).toBe(false);
+        expect(r.page).toEqual({ widthMM: 279, heightMM: 216 });
+    });
+
+    it('leaves a square page alone rather than turning it pointlessly', () => {
+        const r = orientLandscape(pathsToStrokes([fullPage(200, 200)]), { widthMM: 200, heightMM: 200 });
+        expect(r.rotated).toBe(false);
     });
 
     /**
-     * Regression for the real failure: portrait Letter needs 279.4mm of Y on a
-     * machine with 218mm of Y travel. Turned 90° it needs 279.4mm of X against
-     * 280mm available, and fits with 0.6mm to spare.
+     * Regression: portrait Letter needs 279.4mm of Y on a machine with 218mm of
+     * Y travel. Laid landscape it needs 279.4mm of X against 280mm available.
      */
-    it('rotates portrait Letter to fit an A4 machine', () => {
-        const strokes = pathsToStrokes([fullPage(215.9, 279.4)]);
-        const r = orientToMachine(strokes, { widthMM: 215.9, heightMM: 279.4 }, A4_MACHINE);
-        expect(r.rotated).toBe(true);
-        expect(r.page.widthMM).toBeCloseTo(279.4);
-        expect(r.page.heightMM).toBeCloseTo(215.9);
-        expect(envelopeViolation(r.strokes, A4_MACHINE)).toBeNull();
-    });
-
-    it('leaves a page that already fits alone', () => {
-        const strokes = pathsToStrokes([fullPage(100, 100)]);
-        const r = orientToMachine(strokes, { widthMM: 100, heightMM: 100 }, A4_MACHINE);
-        expect(r.rotated).toBe(false);
-    });
-
-    it('does not rotate when neither orientation fits', () => {
-        const strokes = pathsToStrokes([fullPage(500, 500)]);
-        const r = orientToMachine(strokes, { widthMM: 500, heightMM: 500 }, A4_MACHINE);
-        expect(r.rotated).toBe(false);
-        expect(envelopeViolation(r.strokes, A4_MACHINE)).not.toBeNull();
-    });
-
-    it('places portrait Letter inside an A4 machine end to end', () => {
+    it('places portrait Letter inside an A4 machine', () => {
         const p = placeForMachine([fullPage(215.9, 279.4)], {
-            page: LETTER_PORTRAIT,
-            envelope: A4_MACHINE,
-            homeCorner: 'top-right',
+            page: { width: 215.9, height: 279.4 },
         });
         expect(p.rotated).toBe(true);
-        expect(envelopeViolation(p.strokes, A4_MACHINE)).toBeNull();
+        expect(p.page.widthMM).toBeCloseTo(279.4);
+        expect(p.page.heightMM).toBeCloseTo(215.9);
+        expect(envelopeViolation(p.strokes, MACHINE_ENVELOPES['V3'])).toBeNull();
     });
 
-    /**
-     * Orientation and corner-anchoring do not commute: anchoring first would
-     * measure X from the pre-rotation edge and push the drawing off the sheet.
-     */
-    it('anchors against the oriented page width, not the original', () => {
+    it('keeps the whole sheet in +X/+Y, since the machine cannot go negative', () => {
         const p = placeForMachine([fullPage(215.9, 279.4)], {
-            page: LETTER_PORTRAIT,
-            envelope: A4_MACHINE,
-            homeCorner: 'top-right',
+            page: { width: 215.9, height: 279.4 },
         });
-        const b = strokeBoundsOf(p.strokes);
-        // Flush against home on one side, out to the oriented width on the other.
-        expect(b.minX).toBeCloseTo(0);
-        expect(b.maxX).toBeCloseTo(279.4);
-        expect(b.maxY).toBeCloseTo(215.9);
+        for (const s of p.strokes) {
+            for (const pt of s.points) {
+                expect(pt.x).toBeGreaterThanOrEqual(-0.001);
+                expect(pt.y).toBeGreaterThanOrEqual(-0.001);
+            }
+        }
     });
 
-    it('respects autoOrient: false even when that leaves the page unplottable', () => {
-        const p = placeForMachine([fullPage(215.9, 279.4)], {
-            page: LETTER_PORTRAIT,
-            envelope: A4_MACHINE,
-            homeCorner: 'top-left',
-            autoOrient: false,
+    it('converts units before deciding orientation', () => {
+        // 5.83 x 8.27in is portrait; in mm that is 148 x 210.
+        const p = placeForMachine([fullPage(5.83, 8.27)], {
+            units: 'in',
+            page: { width: 5.83, height: 8.27 },
         });
-        expect(p.rotated).toBe(false);
-        expect(envelopeViolation(p.strokes, A4_MACHINE)).not.toBeNull();
+        expect(p.rotated).toBe(true);
+        expect(p.page.widthMM).toBeCloseTo(210.1, 1);
+        expect(p.page.heightMM).toBeCloseTo(148.1, 1);
     });
 });
-
-function strokeBoundsOf(strokes: { points: { x: number; y: number }[] }[]) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const s of strokes) for (const p of s.points) {
-        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-    }
-    return { minX, minY, maxX, maxY };
-}

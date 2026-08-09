@@ -136,10 +136,8 @@
             <!-- Optimize button removed, auto-optimize is active -->
             <div class="secondary-actions">
               <button type="button" id="pageSetupBtn" class="btn-secondary">Paper & Units</button>
-              <button type="button" id="simulateBtn" class="btn-secondary" disabled>Simulate</button>
+              <button type="button" id="simulateBtn" class="btn-secondary" disabled>Preview &amp; Plot</button>
               <button type="button" id="exportBtn" class="btn-secondary" disabled>Export SVG</button>
-              <!-- Hidden unless navigator.serial exists (Chromium only) -->
-              <button type="button" id="plotBtn" class="btn-secondary hidden" disabled>Plot</button>
             </div>
           </div>
         </aside>
@@ -212,139 +210,156 @@
       </div>
     </div>
 
-    <!-- Plot Modal (AxiDraw over WebSerial) -->
+    <!-- Preview & Plot: one dialog so paper placement is visible while the
+         settings that determine it are being changed. -->
     <div id="plotModal" class="modal hidden">
-      <div class="modal-content settings-modal">
+      <div class="modal-content plot-layout">
         <button class="modal-close" id="closePlotBtn">&times;</button>
-        <h3>Plot to AxiDraw</h3>
 
-        <div class="control-group">
-          <div class="settings-row">
-            <label>Machine</label>
-            <!-- No default: the envelope is the only thing standing between a
-                 bad number and the end stops, so it must be chosen, not guessed. -->
-            <select id="plotMachine">
-              <option value="" selected>Select your machine…</option>
-              <option value="Mini">AxiDraw Mini (152 × 101 mm)</option>
-              <option value="V3">AxiDraw V3 / SE — A4 (280 × 218 mm)</option>
-              <option value="V3A3">AxiDraw V3/A3 / SE-A3 (430 × 297 mm)</option>
-              <option value="V3XL">AxiDraw V3 XL (595 × 218 mm)</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="control-group">
-          <div class="settings-row">
-            <label>Pen parks over</label>
-            <select id="plotHomeCorner">
-              <option value="top-left">Top-LEFT corner of the paper</option>
-              <option value="top-right" selected>Top-RIGHT corner of the paper</option>
-            </select>
-          </div>
-          <p class="plot-hint">
-            The machine only travels in +X and +Y from where it is homed, so this
-            decides which page edge X is measured from. Get it wrong and the
-            drawing runs off the sheet sideways.
-          </p>
-          <label>
-            <input type="checkbox" id="plotAutoOrient" checked />
-            Lay the paper's long edge along the gantry
-          </label>
-          <p class="plot-hint">
-            An AxiDraw's X travel is longer than its Y, so a portrait page often
-            only fits turned 90°. Rotates the plot when that is what makes it fit.
-          </p>
-        </div>
-
-        <div class="control-group">
-          <div class="settings-grid">
-            <div class="input-group-vertical">
-              <label class="input-label-sm">Pen down speed (<span id="plotSpeedDownMms">25 mm/s</span>)</label>
-              <input type="number" id="plotSpeedDown" min="1" max="100" step="1" value="50" />
-            </div>
-            <div class="input-group-vertical">
-              <label class="input-label-sm">Pen up speed (<span id="plotSpeedUpMms">100 mm/s</span>)</label>
-              <input type="number" id="plotSpeedUp" min="1" max="100" step="1" value="100" />
-            </div>
-            <div class="input-group-vertical">
-              <label class="input-label-sm">Pen down position</label>
-              <input type="number" id="plotPenDown" min="0" max="100" step="1" value="30" />
-            </div>
-            <div class="input-group-vertical">
-              <label class="input-label-sm">Pen up position</label>
-              <input type="number" id="plotPenUp" min="0" max="100" step="1" value="60" />
-            </div>
-          </div>
-        </div>
-
-        <div class="control-group">
-          <p class="plot-hint">
-            Park the pen at the top-left corner of the paper before plotting —
-            that position becomes the origin.
-          </p>
-          <div id="plotFirmware" class="plot-firmware"></div>
-          <div id="plotStatus" class="plot-status">Not connected.</div>
-          <div class="sim-scrubber-container">
-            <div class="sim-progress-bar" id="plotProgressBar"></div>
-          </div>
-        </div>
-
-        <div class="modal-actions">
-          <button id="plotConnectBtn" class="btn-secondary">Connect</button>
-          <button id="plotMotorsBtn" class="btn-secondary" disabled>Release motors</button>
-          <button id="plotHomeBtn" class="btn-secondary" disabled>Return to origin</button>
-          <button id="plotHomeMachineBtn" class="btn-secondary" disabled>Home machine</button>
-          <button id="plotCancelBtn" class="btn-secondary hidden">Stop</button>
-          <button id="plotStartBtn" class="btn-primary" disabled>Plot</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Simulation Modal -->
-    <div id="simulationModal" class="modal hidden">
-      <div class="modal-content">
-        <button class="modal-close" id="closeSimBtn">&times;</button>
-        <div class="sim-canvas-container">
-          <canvas id="simCanvas"></canvas>
-        </div>
-        <div class="sim-controls">
-          <button id="simPlayPause" class="icon-btn">
-            <!-- Play Icon -->
-            <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M8 5v14l11-7z" />
+        <!-- Preview -->
+        <div class="plot-main">
+          <!-- The machine itself: pen carriage riding the gantry rail, drawn
+               along the top edge so the preview below reads as the bed. -->
+          <div class="plot-machine-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />
             </svg>
-            <!-- Pause Icon (hidden by default) -->
-            <svg class="pause-icon hidden" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+            <svg class="rail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-left: -20.5px;">
+              <rect width="30" height="12" x="2" y="6" rx="2" />
+              <path d="M12 12h.01" />
+              <path d="M17 12h.01" />
+              <path d="M22 12h.01" />
+              <path d="M27 12h.01" />
+              <path d="M7 12h.01" />
             </svg>
-          </button>
-
-          <div class="sim-time" id="simTime">0:00 / 0:00</div>
-
-          <div class="sim-scrubber-container">
-            <input type="range" id="simScrubber" min="0" max="100" value="0" step="0.1" />
-            <div class="sim-progress-bar" id="simProgressBar"></div>
+            <span>Relative to AxiDraw along top edge</span>
           </div>
-
-          <div class="sim-speed-container">
-            <span class="speed-label">Speed</span>
-            <select id="simSpeed">
-              <option value="1">1x</option>
-              <option value="5">5x</option>
-              <option value="10" selected>10x</option>
-              <option value="50">50x</option>
-              <option value="100">100x</option>
-            </select>
-            <div class="blot-toggle">
-              <input type="checkbox" id="simBlots" />
-              <label for="simBlots">Blots</label>
+          <div class="sim-canvas-container">
+            <canvas id="simCanvas"></canvas>
+            <div class="plot-empty hidden" id="plotEmpty">
+              Select a machine to see the paper on the bed.
             </div>
-            <div class="blot-toggle">
-              <input type="checkbox" id="simTravel" checked />
-              <label for="simTravel">Travel</label>
+          </div>
+          <div class="sim-controls">
+            <button id="simPlayPause" class="icon-btn">
+              <!-- Play Icon -->
+              <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              <!-- Pause Icon (hidden by default) -->
+              <svg class="pause-icon hidden" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+              </svg>
+            </button>
+
+            <div class="sim-time" id="simTime">0:00 / 0:00</div>
+
+            <div class="sim-scrubber-container">
+              <input type="range" id="simScrubber" min="0" max="100" value="100" step="0.1" />
+              <div class="sim-progress-bar" id="simProgressBar"></div>
+            </div>
+
+            <div class="sim-speed-container">
+              <span class="speed-label">Speed</span>
+              <select id="simSpeed">
+                <option value="1">1x</option>
+                <option value="5">5x</option>
+                <option value="10" selected>10x</option>
+                <option value="50">50x</option>
+                <option value="100">100x</option>
+              </select>
+              <div class="blot-toggle">
+                <input type="checkbox" id="simBlots" />
+                <label for="simBlots">Blots</label>
+              </div>
+              <div class="blot-toggle">
+                <input type="checkbox" id="simTravel" checked />
+                <label for="simTravel">Travel</label>
+              </div>
             </div>
           </div>
         </div>
+
+        <!-- Settings -->
+        <aside class="plot-sidebar">
+          <h3>Preview &amp; Plot</h3>
+
+          <div class="control-group">
+            <div class="input-group-vertical">
+              <label class="input-label-sm">Machine</label>
+              <!-- No default: the envelope is the only thing standing between a
+                   bad number and the end stops, so it must be chosen, not guessed. -->
+              <select id="plotMachine">
+                <option value="" selected>Select your machine…</option>
+                <option value="Mini">AxiDraw Mini (152 × 101 mm)</option>
+                <option value="V3">AxiDraw V3 / SE — A4 (280 × 218 mm)</option>
+                <option value="V3A3">AxiDraw V3/A3 / SE-A3 (430 × 297 mm)</option>
+                <option value="V3XL">AxiDraw V3 XL (595 × 218 mm)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="group-label">Pen</label>
+            <div class="settings-grid">
+              <div class="input-group-vertical">
+                <label class="input-label-sm">Down speed <span class="unit-note" id="plotSpeedDownMms">25 mm/s</span></label>
+                <input type="number" id="plotSpeedDown" min="1" max="100" step="1" value="50" />
+              </div>
+              <div class="input-group-vertical">
+                <label class="input-label-sm">Up speed <span class="unit-note" id="plotSpeedUpMms">100 mm/s</span></label>
+                <input type="number" id="plotSpeedUp" min="1" max="100" step="1" value="100" />
+              </div>
+              <div class="input-group-vertical">
+                <label class="input-label-sm">Down position</label>
+                <input type="number" id="plotPenDown" min="0" max="100" step="1" value="30" />
+              </div>
+              <div class="input-group-vertical">
+                <label class="input-label-sm">Up position</label>
+                <input type="number" id="plotPenUp" min="0" max="100" step="1" value="60" />
+              </div>
+              <div class="input-group-vertical">
+                <label class="input-label-sm">Up delay <span class="unit-note">ms</span></label>
+                <input type="number" id="plotDelayUp" min="0" max="2000" step="10" value="0" />
+              </div>
+              <div class="input-group-vertical">
+                <label class="input-label-sm">Down delay <span class="unit-note">ms</span></label>
+                <input type="number" id="plotDelayDown" min="0" max="2000" step="10" value="0" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Everything below needs WebSerial; hidden entirely without it so
+               the dialog still works as a preview in Safari and Firefox. -->
+          <div id="plotConnectSection">
+            <div class="control-group">
+              <label>
+                <input type="checkbox" id="plotFollow" checked />
+                Follow the pen in the preview
+              </label>
+            </div>
+
+            <div class="plot-actions" id="plotActions">
+              <button id="plotConnectBtn" class="btn-secondary">Connect</button>
+              <button id="plotMotorsBtn" class="btn-secondary" disabled>Release motors</button>
+              <button id="plotHomeMachineBtn" class="btn-secondary" disabled>Home machine</button>
+              <button id="plotCancelBtn" class="btn-secondary hidden">Stop</button>
+              <button id="plotStartBtn" class="btn-primary" disabled>Plot</button>
+            </div>
+
+            <!-- Both collapse when empty; only problems and live progress show. -->
+            <div class="sim-scrubber-container plot-progress-track hidden" id="plotProgressWrap">
+              <div class="sim-progress-bar" id="plotProgressBar"></div>
+            </div>
+            <div id="plotFirmware" class="plot-firmware"></div>
+            <div id="plotStatus" class="plot-status"></div>
+          </div>
+        </aside>
+
+        <!-- Status and actions -->
       </div>
     </div>
   </div>

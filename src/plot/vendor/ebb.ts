@@ -16,7 +16,6 @@ import type { JobMetrics } from './job.ts'
 import {
   EbbCommands,
   SPEED_PENDOWN_MAX_MMS, SPEED_PENUP_MAX_MMS,
-  ACCEL_MAX_MMS2,
   firmwareCapabilities, type EbbCapabilities,
 } from './ebb-protocol.ts'
 import type { EbbTransport } from './transport.ts'
@@ -542,28 +541,29 @@ export class EBBBackend implements PlotBackend {
             return { stoppedAt: (copy + i / moves.length) / copies, aborted: true }
           }
           if (this.penIsDown) {
-            // Send pen-up command immediately — servo starts rising. We then
-            // compute how much of the settle window is covered by the upcoming
-            // travel move and sleep only the remaining gap. This way:
-            //   • long travels (≥ settle window): no extra wait — same as before
-            //   • short travels (convergence zones, hatching): pen is fully up
-            //     before the arm arrives at the next stroke start
+            // DIVERGENCE FROM UPSTREAM: wait out the full settle window here,
+            // before any lateral movement.
+            //
+            // nib used to send SP and then sleep only the part of the settle
+            // window not covered by the upcoming travel, reasoning that a long
+            // travel leaves the pen "fully up before the arm arrives". But the
+            // arm starts moving immediately, so the nib is still on the paper
+            // for the first part of the move and drags a line out of the
+            // stroke — which is exactly what penDelayUp exists to prevent.
+            // nib's own live path (plotLiveStroke) already waits properly; only
+            // this batch path took the shortcut.
+            //
+            // Costs a full settle per lift (servo travel plus the user's
+            // delay). That is the price of the setting doing what it says.
             await this.ebb.sendPenUp(this.servoRaiseDurationMs)
             this.penIsDown = false
             emitter.emit('pen:up')
+            await sleep(this.servoRaiseDurationMs + this.penDelayUpMs)
           }
           const dx = move.x - this.currentX
           const dy = move.y - this.currentY
           const dist = Math.hypot(dx, dy)
           if (dist > 0.001) {
-            const totalSettleMs = this.servoRaiseDurationMs + this.penDelayUpMs
-            const accelMms2 = profile.accelCapMms2 ?? ACCEL_MAX_MMS2
-            // Triangle profile (no speed cap) is the fastest possible travel —
-            // a lower bound on actual travel time, so extraSettleMs is always safe.
-            const travelLowerBoundMs = 2 * Math.sqrt(dist / accelMms2) * 1000
-            const extraSettleMs = Math.max(0, totalSettleMs - travelLowerBoundMs)
-            if (extraSettleMs > 0) await sleep(extraSettleMs)
-
             if (this.useLm) await this.lmSingleMove(dx, dy, profile, false, signal)
             else            await this.ebb.move(dx, dy, speedUp)
             this.currentX = move.x
