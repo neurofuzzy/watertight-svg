@@ -37,5 +37,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      # gh-pages parses -u with an RFC 5322 address parser, which rejects the
+      # square brackets in the github-actions[bot] identity - in the display
+      # name *and* in the address local part, so no amount of quoting helps.
+      # Setting the identity in git instead sidesteps the parser: with -u
+      # omitted, gh-pages reads user.name/user.email from the working copy.
       - name: Publish to gh-pages
-        run: npx gh-pages -d dist -u "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          npx gh-pages -d dist
