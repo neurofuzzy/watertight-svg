@@ -5,7 +5,7 @@
 import './index.css';
 import { type OptimizeOptions, type SVGDocument, type Path } from './geometry/types';
 import { parseSVG } from './geometry/parser';
-import { formatStats, type OptimizeResult } from './optimize';
+import { calculateStats, formatStats, type OptimizeResult } from './optimize';
 import { fitToPaper } from './optimize/scale';
 import type { WorkerMessage, WorkerResponse } from './worker';
 import { renderPreview } from './ui/preview';
@@ -28,7 +28,11 @@ const originalPreview = document.getElementById('originalPreview')!;
 const optimizedPreview = document.getElementById('optimizedPreview')!;
 const originalStats = document.getElementById('originalStats')!;
 const optimizedStats = document.getElementById('optimizedStats')!;
+const optimizedTitle = document.getElementById('optimizedTitle')!;
 const exportBtn = document.getElementById('exportBtn')!;
+const optimizeBtn = document.getElementById('optimizeBtn') as HTMLButtonElement;
+const revertBtn = document.getElementById('revertBtn') as HTMLButtonElement;
+const optimizeStatus = document.getElementById('optimizeStatus')!;
 
 // Control inputs
 const mergePathsInput = document.getElementById('mergePaths') as HTMLInputElement;
@@ -73,7 +77,13 @@ let currentUnit = 'in'; // Default to Imperial
 
 // Application state
 let currentSVG: string | null = null;
+/** The parsed source document, before any optimization. */
+let currentDoc: SVGDocument | null = null;
 let currentResult: OptimizeResult | null = null;
+/** True when `currentResult` came out of the pipeline rather than being the source. */
+let isOptimized = false;
+/** True when settings changed after an optimization run, so the view is out of date. */
+let isStale = false;
 let shouldResetZoom = false;
 
 // Worker Management
@@ -91,6 +101,7 @@ function init() {
     setupButtons();
     // Initialize dependencies on load
     updateDependencies();
+    updateOptimizeState();
 }
 
 // Drag and drop handling
@@ -139,11 +150,56 @@ async function handleFile(file: File) {
         currentSVG = await file.text();
         shouldResetZoom = true;
         showPreview();
-        runOptimization();
+        // Optimization is manual: show the source geometry and let the user
+        // decide. It is already exportable and plottable as-is.
+        loadSource();
     } catch (error) {
         console.error('Error reading file:', error);
         alert('Error reading file');
     }
+}
+
+/**
+ * Wrap a parsed document as a result with no optimization applied, so every
+ * downstream consumer (preview, export, simulator, plotter) can treat "raw" and
+ * "optimized" identically. `original` and `optimized` are the same document by
+ * definition here.
+ */
+function passthroughResult(doc: SVGDocument): OptimizeResult {
+    const stats = calculateStats(doc.paths);
+    return { original: doc, optimized: doc, beforeStats: stats, afterStats: { ...stats } };
+}
+
+/**
+ * Parse the source SVG and show it unoptimized.
+ *
+ * Parsing is the one thing that has to happen up front — it needs the DOM, and
+ * it is what turns the file into `Path[]`. Anything already optimized is
+ * dropped, because a re-parse changes the input the optimization was run on.
+ */
+function loadSource() {
+    if (!currentSVG) return;
+    try {
+        currentDoc = parseSVG(currentSVG, {
+            discardPageRects: discardPageRectsInput.checked,
+        });
+    } catch (error) {
+        console.error('Error parsing SVG:', error);
+        alert('Could not parse that SVG');
+        return;
+    }
+    showSource();
+}
+
+/** Show the already-parsed source document, discarding any optimization. */
+function showSource() {
+    if (!currentDoc) return;
+    currentResult = passthroughResult(currentDoc);
+    isOptimized = false;
+    isStale = false;
+    renderResult();
+    updateOptimizeState();
+    setOutputEnabled(true);
 }
 
 // Show the preview section
@@ -154,8 +210,13 @@ function showPreview() {
     dropZone.style.padding = 'var(--space-md)';
 }
 
-// Update preview with current layer settings
-function updatePreviewWithCurrentLayers() {
+/**
+ * Draw both preview panels and their stats from `currentResult`.
+ *
+ * Shared by the optimizer's success handler, the unoptimized source view, and
+ * the layer toggle, so the three cannot disagree about what is on screen.
+ */
+function renderResult() {
     if (!currentResult) return;
 
     // Calculate layers if layer by depth is enabled
@@ -164,9 +225,16 @@ function updatePreviewWithCurrentLayers() {
         layers = groupPathsByDepth(currentResult.optimized.paths);
     }
 
-    // Check for Plotter Mode (Merge + None) to disable fill preview
+    renderPreview(originalPreview, currentResult.original, {
+        showTravel: false,
+        drawColor: '#a0a0b0',
+    });
+
+    // Check for Plotter Mode (Merge + None) to disable fill preview. Only
+    // meaningful once the pipeline has run — the source is shown as authored.
     const options = getOptions();
-    const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
+    const isPlotterMode = isOptimized
+        && options.mergePaths && !options.findRegions && !options.closePaths;
 
     renderPreview(optimizedPreview, currentResult.optimized, {
         showTravel: true,
@@ -174,23 +242,61 @@ function updatePreviewWithCurrentLayers() {
         ...(isPlotterMode && { fillColor: 'none' })
     }, layers);
 
-    // Re-attach pan/zoom controller to new SVG elements to maintain sync and state
+    // Re-attach pan/zoom controller to the new SVG elements to maintain sync
     const originalSvg = originalPreview.querySelector('svg');
     const optimizedSvg = optimizedPreview.querySelector('svg');
 
     if (originalSvg && optimizedSvg) {
-        // Pass false to preserve current zoom/pan state
-        panZoom.attach([originalSvg, optimizedSvg], false);
+        panZoom.attach([originalSvg, optimizedSvg], shouldResetZoom);
+        shouldResetZoom = false;
     }
 
-    // Update optimized stats display with current layer count
+    originalStats.textContent = formatStats(currentResult.beforeStats);
+
+    // Layer count depends on the current UI state, not on the pipeline run
     const optimizedStatsWithLayers = { ...currentResult.afterStats };
-    if (layerByDepthInput.checked) {
-        optimizedStatsWithLayers.layerCount = layers ? layers.size : 1;
-    } else {
-        optimizedStatsWithLayers.layerCount = 1;
-    }
+    optimizedStatsWithLayers.layerCount = layerByDepthInput.checked && layers ? layers.size : 1;
     optimizedStats.textContent = formatStats(optimizedStatsWithLayers);
+}
+
+/**
+ * Reflect the optimize/stale state in the button, the panel heading and the
+ * status line.
+ *
+ * The point of the status line is that "not optimized" is a real, usable state
+ * here — export and plot both work from it — so it has to be legible rather
+ * than looking like something failed.
+ */
+function updateOptimizeState() {
+    const hasDoc = !!currentDoc;
+
+    optimizeBtn.disabled = !hasDoc;
+    optimizeBtn.textContent = isOptimized ? 'Re-optimize' : 'Optimize';
+    optimizeBtn.classList.toggle('is-stale', isStale);
+    revertBtn.classList.toggle('hidden', !isOptimized);
+    optimizedTitle.textContent = isOptimized ? 'Optimized' : 'Source (not optimized)';
+
+    optimizeStatus.classList.toggle('is-stale', isStale);
+    if (!hasDoc) {
+        optimizeStatus.textContent = '';
+    } else if (isStale) {
+        optimizeStatus.textContent = 'Settings changed since the last run — Optimize to apply them.';
+    } else if (isOptimized) {
+        optimizeStatus.textContent = '';
+    } else {
+        optimizeStatus.textContent = 'Source geometry — export and plot will use it unchanged.';
+    }
+}
+
+/**
+ * Mark the displayed optimization as out of date. Nothing re-runs on its own;
+ * a settings change is a statement of intent, not a request to reprocess a
+ * 25k-segment document.
+ */
+function markStale() {
+    if (!isOptimized || isStale) return;
+    isStale = true;
+    updateOptimizeState();
 }
 
 /**
@@ -224,12 +330,11 @@ function setupControls() {
         gapValueSpan.textContent = `${gapToleranceInput.value}px`;
     });
 
-    // Auto-optimize on control changes
-    const autoOptimize = () => {
+    // Control changes never re-run the pipeline — they only mark the current
+    // view stale. Optimization is invoked by the button.
+    const onControlsChanged = () => {
         updateDependencies();
-        if (currentSVG) {
-            runOptimization();
-        }
+        markStale();
     };
 
 
@@ -264,7 +369,7 @@ function setupControls() {
         }
 
         // Trigger updates
-        autoOptimize();
+        onControlsChanged();
         saveSettings();
     };
 
@@ -280,7 +385,7 @@ function setupControls() {
 
     // Modified listener wrapper to sync presets
     const onSettingChange = () => {
-        autoOptimize();
+        onControlsChanged();
         checkPresets();
         saveSettings();
     };
@@ -291,15 +396,18 @@ function setupControls() {
     gapToleranceInput.addEventListener('change', onSettingChange);
     fixWindingInput.addEventListener('change', onSettingChange);
 
-    // Not part of any preset - re-parses the source SVG, so just re-run
+    // Not part of any preset - it changes what the parser produces, so re-parse
+    // straight away. That resets the view to the source: an optimization run
+    // against different input is no longer valid.
     discardPageRectsInput.addEventListener('change', () => {
-        autoOptimize();
+        updateDependencies();
         saveSettings();
+        loadSource();
     });
 
     // Layer by depth checkbox - need to re-render preview when changed
     layerByDepthInput.addEventListener('change', () => {
-        updatePreviewWithCurrentLayers();
+        renderResult();
         updatePageSettings();
         saveSettings();
     });
@@ -584,9 +692,21 @@ function getFillStrategy(): 'none' | 'close' | 'regions' {
     return (checked?.value || 'none') as 'none' | 'close' | 'regions';
 }
 
+/** Export and Preview & Plot both work from `currentResult`, optimized or not. */
+function setOutputEnabled(enabled: boolean) {
+    exportBtn.toggleAttribute('disabled', !enabled);
+    simulateBtn.toggleAttribute('disabled', !enabled);
+}
+
 // Setup buttons
 function setupButtons() {
-    // optimizeBtn removed - optimization is automatic
+    optimizeBtn.addEventListener('click', () => {
+        if (currentDoc) runOptimization();
+    });
+
+    // Back to the source geometry without re-reading the file. Cheap, because
+    // the parsed document is still in hand.
+    revertBtn.addEventListener('click', showSource);
 
     exportBtn.addEventListener('click', () => {
         if (currentResult) {
@@ -702,7 +822,7 @@ function createWorker() {
 
 // Run optimization via Worker
 function runOptimization() {
-    if (!currentSVG) return;
+    if (!currentDoc) return;
 
     // Show loading state
     setLoading(true);
@@ -710,19 +830,14 @@ function runOptimization() {
     try {
         const options = getOptions();
 
-        // Parse SVG locally to use DOM APIs
-        const document = parseSVG(currentSVG, {
-            discardPageRects: discardPageRectsInput.checked,
-        });
-
         // Reset worker for new task (cancellation)
         createWorker();
 
-        // Send parsed document to worker
+        // Send the already-parsed document to the worker
         if (worker) {
             worker.postMessage({
                 type: 'optimize',
-                document,
+                document: currentDoc,
                 options
             } as WorkerMessage);
         }
@@ -730,61 +845,19 @@ function runOptimization() {
     } catch (error) {
         console.error('Error starting optimization:', error);
         setLoading(false);
+        setOutputEnabled(!!currentResult);
     }
 }
 
 // Handle successful optimization from worker
 function handleOptimizationSuccess(result: OptimizeResult) {
     currentResult = result;
+    isOptimized = true;
+    isStale = false;
 
-    // Calculate layers if layer by depth is enabled
-    let layers: Map<number, Path[]> | undefined;
-    if (layerByDepthInput.checked) {
-        layers = groupPathsByDepth(currentResult.optimized.paths);
-    }
-
-    // Render previews
-    renderPreview(originalPreview, currentResult.original, {
-        showTravel: false,
-        drawColor: '#a0a0b0',
-    });
-
-    // Check for Plotter Mode (Merge + None) to disable fill preview
-    const options = getOptions();
-    const isPlotterMode = options.mergePaths && !options.findRegions && !options.closePaths;
-
-    renderPreview(optimizedPreview, currentResult.optimized, {
-        showTravel: true,
-        useLayerColors: layerByDepthInput.checked,
-        ...(isPlotterMode && { fillColor: 'none' })
-    }, layers);
-
-    // Attach Pan/Zoom controller
-    const originalSvg = originalPreview.querySelector('svg');
-    const optimizedSvg = optimizedPreview.querySelector('svg');
-
-    if (originalSvg && optimizedSvg) {
-        panZoom.attach([originalSvg, optimizedSvg], shouldResetZoom);
-        shouldResetZoom = false;
-    }
-
-    // Update stats
-    originalStats.textContent = formatStats(currentResult.beforeStats);
-
-    // Calculate layer count for optimized stats based on current UI state
-    const optimizedStatsWithLayers = { ...currentResult.afterStats };
-    if (layerByDepthInput.checked) {
-        const layers = groupPathsByDepth(currentResult.optimized.paths);
-        optimizedStatsWithLayers.layerCount = layers.size;
-    } else {
-        optimizedStatsWithLayers.layerCount = 1;
-    }
-
-    optimizedStats.textContent = formatStats(optimizedStatsWithLayers);
-
-    // Enable export & simulate
-    exportBtn.removeAttribute('disabled');
-    (document.getElementById('simulateBtn') as HTMLButtonElement).removeAttribute('disabled');
+    renderResult();
+    updateOptimizeState();
+    setOutputEnabled(true);
 
     // Log improvement
     const reduction = (
@@ -807,6 +880,8 @@ function handleOptimizationError(error: string) {
         alert('Optimization failed: ' + error);
     }
     setLoading(false);
+    // The previous view is still valid and still exportable/plottable.
+    setOutputEnabled(!!currentResult);
 }
 
 // Update progress overlay
@@ -847,14 +922,16 @@ function setLoading(loading: boolean) {
             optimizedPreview.appendChild(overlay);
         }
 
-        exportBtn.setAttribute('disabled', 'true');
+        setOutputEnabled(false);
+        optimizeBtn.disabled = true;
         document.body.style.cursor = 'wait';
     } else {
         // Remove overlay
         const overlay = document.getElementById('loadingOverlay');
         if (overlay) overlay.remove();
 
-        // Export button state is handled in success
+        // Output button state is handled by the success/error handlers
+        optimizeBtn.disabled = !currentDoc;
         document.body.style.cursor = 'default';
     }
 }
@@ -1017,6 +1094,7 @@ function buildSimulatorView(): {
 const simulateBtn = document.getElementById('simulateBtn') as HTMLButtonElement;
 const simCanvas = document.getElementById('simCanvas') as HTMLCanvasElement;
 const plotEmpty = document.getElementById('plotEmpty')!;
+const plotSourceNote = document.getElementById('plotSourceNote')!;
 const simPlayPauseBtn = document.getElementById('simPlayPause')!;
 const playIcon = simPlayPauseBtn.querySelector('.play-icon')!;
 const pauseIcon = simPlayPauseBtn.querySelector('.pause-icon')!;
@@ -1110,6 +1188,9 @@ function openPlotDialog() {
     }
 
     simSpeedSelect.value = '10';
+    // Say plainly which geometry is on the bed — an unoptimized plot is a valid
+    // choice, but not one to discover from the travel lines.
+    plotSourceNote.classList.toggle('hidden', isOptimized);
     // Open on the finished plot: this is a print preview first, an animation
     // second.
     refreshPreview(1);
