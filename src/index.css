@@ -789,6 +789,56 @@ body {
   flex: 1;
 }
 
+/* The action stack: Optimize on its own row, then status, then the
+   export/plot row. Optimization is manual, so this button is the one thing in
+   the panel that has to be found without looking. */
+.actions {
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.actions>* {
+  flex: none;
+}
+
+.optimize-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.optimize-actions .btn-secondary {
+  flex: 0 0 auto;
+}
+
+/* Settings changed since the last run: the displayed geometry is no longer
+   what the current settings would produce. */
+.btn-primary.is-stale {
+  animation: stale-pulse 2s var(--ease-out) infinite;
+}
+
+@keyframes stale-pulse {
+
+  0%,
+  100% {
+    box-shadow: var(--shadow-sm);
+  }
+
+  50% {
+    box-shadow: var(--shadow-glow);
+  }
+}
+
+.optimize-status {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  min-height: 1em;
+}
+
+.optimize-status.is-stale {
+  color: var(--accent-secondary);
+}
+
 /* Page Setup Modal Styles */
 .settings-modal {
   max-width: 500px;

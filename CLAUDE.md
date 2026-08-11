@@ -30,7 +30,9 @@ There is no native/WASM component. A Rust port of the region finder existed unti
 
 ### Data model
 
-Everything is flattened to `Path { points: Point[], closed: boolean, meta? }` (`src/geometry/types.ts`). Curves, arcs, shapes — all sampled into polylines at parse time. There are no beziers anywhere past the parser.
+Everything is flattened to `Path { points: Point[], closed: boolean, meta? }` (`src/geometry/types.ts`). Curves, arcs, shapes — all reduced to polylines at parse time. There are no beziers anywhere past the parser.
+
+**Vertices are exact; only curves are sampled.** `src/geometry/path-data.ts` reads the `d` attribute (and the shape elements' own attributes) and emits corners literally, sampling C/S/Q/T/A at the document-relative step. This is not interchangeable with walking the element by arc length: `getPointAtLength()` lands on a vertex only by coincidence, so it chamfers every corner it passes — on an 8.5×11in page that was ~1.1mm, a quarter of the edge on the smallest shapes in `samples/wood_plot.svg`. Anything that reduces geometry to points must preserve vertices for the same reason.
 
 **Coordinates are always root-SVG viewBox space.** `getPointAtLength()` reports element-local coordinates, so the parser resolves each element's transform chain (`getRootMatrix`, derived from two `getScreenCTM()` calls) and lifts every sample into root space. Anything new that reads geometry off the DOM must do the same.
 
@@ -41,7 +43,8 @@ Everything is flattened to `Path { points: Point[], closed: boolean, meta? }` (`
 `parseSVG` (`src/geometry/parser.ts`) uses **browser SVG DOM APIs** (`getTotalLength`/`getPointAtLength`) so it must run on the main thread. `src/main.ts` parses, then posts the plain `SVGDocument` to `src/worker.ts`, which runs `optimizeDocument` off-thread and posts back progress + result. Consequently:
 
 - Nothing under `src/optimize/` or `src/geometry/` (other than `parser.ts`) may touch the DOM — that code has to run in the worker, and in Node under vitest.
-- Tests can't use `parser.ts`; they use `src/tests/simple-parser.ts`, a regex-based parser that handles line/polyline/polygon/rect/circle only (no curves, no text).
+- `parser.ts` is testable under jsdom (`src/tests/parser.test.ts`) because geometry now comes from attributes rather than `getPointAtLength()`. Two things still need a real browser and are therefore untested: the transform chain (`getScreenCTM`) and `getBBox` sizing. `path-data.ts` is DOM-free outright and covered in `src/tests/path-data.test.ts`.
+- The pipeline tests still use `src/tests/simple-parser.ts`, a regex-based parser that handles line/polyline/polygon/rect/circle only (no curves, no text). It predates the above and is kept because the region-finding baselines in `EXPECTED_REGIONS` are calibrated against its output — swapping it for `parseSVG` would move those numbers.
 - Each optimization run **creates a fresh worker** (`createWorker()` terminates the old one) — that is the cancellation mechanism for a superseded run.
 
 ### The pipeline
@@ -137,6 +140,8 @@ This subtree is main-thread only (WebSerial is on `navigator`) — never import 
 ### UI
 
 `index.html` holds all the markup with hardcoded `id`s; `src/main.ts` (~1000 lines) binds them via `getElementById` at module scope. Adding a control means editing both files. Notable pieces:
+
+**Optimization is manually invoked.** Dropping a file parses it (`loadSource()`) and shows the source geometry; `#optimizeBtn` runs the pipeline. This means **`currentResult` is not always an optimization result** — `passthroughResult()` wraps the parsed document as `{ original: doc, optimized: doc }` so preview, export, simulator and plotter all consume one shape and the file can be plotted with no optimization pass at all. `isOptimized` distinguishes the two; anything that reads pipeline-specific meaning out of the geometry (e.g. the Plotter-Mode fill suppression) must gate on it. Settings changes only call `markStale()` — nothing re-runs on its own, since re-processing a 25k-segment document on every checkbox click is exactly what the manual button exists to avoid. `#discardPageRects` is the exception: it changes the parse, so it re-parses and drops back to the source view rather than leaving an optimization that was run against different input. `renderResult()` is the single renderer for both preview panels; `#revertBtn` returns to the source without re-reading the file.
 
 - Presets (Cutter/Plotter/Custom) are radio buttons; `applyPreset` sets checkboxes and `checkPresets` reverse-matches current checkbox state back to a preset after any manual change.
 - Page-setup values persist to `sessionStorage` under `watertight_settings`. Units (mm/in) are a UI-level concern — everything internal is mm, converted via `toMM()`.
