@@ -7,8 +7,8 @@
   <meta name="description"
     content="SVG optimizer for plotters and cutting machines - merge paths, remove overdraw, optimize cut order" />
   <title>Watertight SVG - Plotter Optimizer</title>
-  <script type="module" crossorigin src="./assets/index-CnV-rfbM.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-KajGhwSS.css">
+  <script type="module" crossorigin src="./assets/index-DuDD0JMM.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CPlkKEtQ.css">
 </head>
 
 <body>
@@ -23,7 +23,7 @@
 
         <div class="preview-panel" style="grid-area: optimized;">
           <div class="panel-header">
-            <h2>Optimized</h2>
+            <h2 id="optimizedTitle">Output</h2>
             <div class="legend">
               <div class="legend-item"><span class="swatch travel"></span>Travel</div>
               <div class="legend-item"><span class="swatch pen-up"></span>Up</div>
@@ -134,7 +134,14 @@
           </div>
 
           <div class="actions">
-            <!-- Optimize button removed, auto-optimize is active -->
+            <!-- Optimization is manual: dropping a file shows the source geometry,
+                 which can be exported or plotted as-is. -->
+            <div class="optimize-actions">
+              <button type="button" id="optimizeBtn" class="btn-primary" disabled>Optimize</button>
+              <button type="button" id="revertBtn" class="btn-secondary hidden"
+                      title="Discard the optimization and go back to the source geometry">Revert</button>
+            </div>
+            <div class="optimize-status" id="optimizeStatus"></div>
             <div class="secondary-actions">
               <button type="button" id="pageSetupBtn" class="btn-secondary">Paper & Units</button>
               <button type="button" id="simulateBtn" class="btn-secondary" disabled>Preview &amp; Plot</button>
@@ -287,6 +294,12 @@
         <!-- Settings -->
         <aside class="plot-sidebar">
           <h3>Preview &amp; Plot</h3>
+
+          <!-- Plotting unoptimized geometry is supported, but the pen-up travel
+               and any overdraw are whatever the file was authored with. -->
+          <div id="plotSourceNote" class="plot-firmware is-warning hidden">
+            Source geometry — not optimized. Strokes plot in document order.
+          </div>
 
           <div class="control-group">
             <div class="input-group-vertical">
