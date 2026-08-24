@@ -1,12 +1,16 @@
 /**
- * SVG Parser - Uses native browser SVG DOM APIs for accurate path parsing
- * 
- * Leverages getPointAtLength() and getTotalLength() for precise sampling
- * of any SVG path including bezier curves and arcs.
+ * SVG Parser - resolves an SVG document into flat polylines in root viewBox space.
+ *
+ * Geometry itself comes from `path-data.ts`, which reads the elements' own
+ * attributes: vertices are emitted exactly and only curves are sampled. The DOM
+ * is used for what only it can answer — the transform chain (`getScreenCTM`)
+ * and computed styles — plus `getPointAtLength()` as a last-resort fallback for
+ * path data that cannot be read, which chamfers corners but never loses a shape.
  */
 
 import type { Point, Path, SVGDocument, PathMeta, BoundingBox } from './types';
 import { pathBounds, signedArea } from './math';
+import { flattenPath, rectSubpath, ellipseSubpath, parsePointsList, type Subpath } from './path-data';
 
 /**
  * Documents are sampled at roughly (largest dimension / this) per point.
@@ -57,13 +61,14 @@ export function parseSVG(svgString: string, options: ParseOptions = {}): SVGDocu
     try {
         // Get dimensions
         const viewBox = svgElement.getAttribute('viewBox');
-        let width = svgElement.viewBox.baseVal.width || parseFloat(svgElement.getAttribute('width') || '0');
-        let height = svgElement.viewBox.baseVal.height || parseFloat(svgElement.getAttribute('height') || '0');
+        const box = viewBoxOf(svgElement);
+        let width = box?.width || parseFloat(svgElement.getAttribute('width') || '0');
+        let height = box?.height || parseFloat(svgElement.getAttribute('height') || '0');
 
         if (!width || !height) {
-            const bbox = svgElement.getBBox();
-            width = width || bbox.width || 100;
-            height = height || bbox.height || 100;
+            const bbox = measureBBox(svgElement);
+            width = width || bbox?.width || 100;
+            height = height || bbox?.height || 100;
         }
 
         const segmentLength = options.segmentLength ?? Math.max(width, height) / SEGMENT_DIVISOR;
@@ -163,9 +168,38 @@ function extractUnits(svgElement: SVGSVGElement): string | undefined {
 
 /** The document's coordinate box, honouring a viewBox with a non-zero origin */
 function documentBox(svgElement: SVGSVGElement, width: number, height: number): BoundingBox {
-    const minX = svgElement.viewBox.baseVal.width ? svgElement.viewBox.baseVal.x : 0;
-    const minY = svgElement.viewBox.baseVal.width ? svgElement.viewBox.baseVal.y : 0;
+    const box = viewBoxOf(svgElement);
+    const minX = box?.width ? box.x : 0;
+    const minY = box?.width ? box.y : 0;
     return { minX, minY, maxX: minX + width, maxY: minY + height };
+}
+
+/**
+ * The root viewBox, read through the SVG DOM where available and off the
+ * attribute where it is not — same reasoning as `lengthValue`.
+ */
+function viewBoxOf(svgElement: SVGSVGElement): { x: number; y: number; width: number; height: number } | null {
+    const baseVal = svgElement.viewBox?.baseVal;
+    if (baseVal && Number.isFinite(baseVal.width)) {
+        return { x: baseVal.x, y: baseVal.y, width: baseVal.width, height: baseVal.height };
+    }
+
+    const parts = (svgElement.getAttribute('viewBox') ?? '')
+        .split(/[\s,]+/)
+        .filter(token => token.length > 0)
+        .map(parseFloat);
+    if (parts.length !== 4 || parts.some(value => !Number.isFinite(value))) return null;
+
+    return { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+}
+
+/** Rendered bounds, when the document declares no size. Unavailable off-browser. */
+function measureBBox(svgElement: SVGSVGElement): { width: number; height: number } | null {
+    try {
+        return svgElement.getBBox();
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -195,7 +229,14 @@ export function isPageRect(path: Path, box: BoundingBox): boolean {
     return Math.abs(signedArea(path.points)) >= boxArea * 0.99;
 }
 
-/** Extract path(s) from a single SVG geometry element */
+/**
+ * Extract path(s) from a single SVG geometry element.
+ *
+ * Geometry comes from the element's own attributes via `path-data.ts`, not from
+ * `getPointAtLength()`: arc-length sampling only lands on a vertex by luck, so
+ * it chamfers every corner it passes. The DOM is still the authority on the
+ * *coordinate system* — hence the matrix — just not on the point list.
+ */
 function extractFromGeometryElement(element: SVGGeometryElement, ctx: ParseContext): Path[] {
     const tagName = element.tagName.toLowerCase();
     const meta = extractMeta(element);
@@ -205,12 +246,129 @@ function extractFromGeometryElement(element: SVGGeometryElement, ctx: ParseConte
     const matrix = getRootMatrix(element, ctx.root);
     const localStep = ctx.segmentLength / matrixScale(matrix);
 
-    // For path elements, we need to handle subpaths
-    if (tagName === 'path') {
-        return extractFromPathElement(element as SVGPathElement, localStep, matrix, meta);
+    const subpaths = subpathsForElement(element, tagName, localStep);
+    if (subpaths === null) {
+        // Path data we could not read. The browser can still draw it, so fall
+        // back to sampling: losing corner fidelity beats losing the geometry.
+        return sampleElement(element, localStep, matrix, meta, tagName);
     }
 
-    // For other geometry elements, use getPointAtLength directly
+    return subpaths
+        .filter(subpath => subpath.points.length >= 2)
+        .map(subpath => ({
+            points: subpath.points.map(p => applyMatrix(matrix, p.x, p.y)),
+            closed: subpath.closed,
+            meta,
+        }));
+}
+
+/**
+ * Exact subpaths for an element, in its own user space.
+ *
+ * Returns null when the element's geometry cannot be read directly — malformed
+ * path data, or an element type this does not know — so the caller can fall
+ * back to the DOM.
+ */
+function subpathsForElement(
+    element: SVGGeometryElement,
+    tagName: string,
+    localStep: number,
+): Subpath[] | null {
+    try {
+        switch (tagName) {
+            case 'path': {
+                const d = element.getAttribute('d');
+                if (!d) return [];
+                return flattenPath(d, localStep);
+            }
+
+            case 'line':
+                return [{
+                    points: [
+                        { x: lengthValue(element, 'x1'), y: lengthValue(element, 'y1') },
+                        { x: lengthValue(element, 'x2'), y: lengthValue(element, 'y2') },
+                    ],
+                    closed: false,
+                }];
+
+            case 'polyline':
+            case 'polygon':
+                return [{
+                    points: parsePointsList(element.getAttribute('points') ?? ''),
+                    closed: tagName === 'polygon',
+                }];
+
+            case 'rect': {
+                // An unspecified radius is "auto", which means "match the other
+                // one" — and 0 only when neither is given. Both report 0, so the
+                // attributes have to be consulted to tell them apart.
+                const hasRx = element.hasAttribute('rx');
+                const hasRy = element.hasAttribute('ry');
+                const rx = hasRx ? lengthValue(element, 'rx')
+                    : (hasRy ? lengthValue(element, 'ry') : 0);
+                const ry = hasRy ? lengthValue(element, 'ry') : rx;
+                return single(rectSubpath(
+                    lengthValue(element, 'x'), lengthValue(element, 'y'),
+                    lengthValue(element, 'width'), lengthValue(element, 'height'),
+                    rx, ry, localStep,
+                ));
+            }
+
+            case 'circle': {
+                const r = lengthValue(element, 'r');
+                return single(ellipseSubpath(
+                    lengthValue(element, 'cx'), lengthValue(element, 'cy'), r, r, localStep,
+                ));
+            }
+
+            case 'ellipse':
+                return single(ellipseSubpath(
+                    lengthValue(element, 'cx'), lengthValue(element, 'cy'),
+                    lengthValue(element, 'rx'), lengthValue(element, 'ry'), localStep,
+                ));
+
+            default:
+                return null;
+        }
+    } catch {
+        return null;
+    }
+}
+
+const single = (subpath: Subpath | null): Subpath[] => (subpath ? [subpath] : []);
+
+/**
+ * Resolved value of a geometry attribute, in the element's user space.
+ *
+ * `baseVal` is preferred because it resolves units and percentages against the
+ * viewport (`width="100%"` on a background rect). The attribute is the fallback
+ * for environments that do not implement the SVG length interfaces — which is
+ * every non-browser DOM, and therefore the only reason these tests can run.
+ */
+function lengthValue(element: Element, property: string): number {
+    const animated = (element as unknown as Record<string, { baseVal?: { value?: unknown } }>)[property];
+    const resolved = animated?.baseVal?.value;
+    if (typeof resolved === 'number' && Number.isFinite(resolved)) return resolved;
+
+    const attribute = parseFloat(element.getAttribute(property) ?? '');
+    return Number.isFinite(attribute) ? attribute : 0;
+}
+
+/**
+ * Last resort: walk the element with `getPointAtLength()`.
+ *
+ * This is the old behaviour, corner chamfering included, kept only for geometry
+ * this parser cannot read. Subpaths are not split out — an element reaching here
+ * is already malformed, and the browser's own interpretation is the best
+ * available account of what it draws.
+ */
+function sampleElement(
+    element: SVGGeometryElement,
+    localStep: number,
+    matrix: DOMMatrix | null,
+    meta: PathMeta,
+    tagName: string,
+): Path[] {
     try {
         const totalLength = element.getTotalLength();
         if (totalLength === 0) return [];
@@ -218,149 +376,14 @@ function extractFromGeometryElement(element: SVGGeometryElement, ctx: ParseConte
         const points = samplePath(element, totalLength, localStep, matrix);
         if (points.length < 2) return [];
 
-        // Determine if closed
-        const closed = ['rect', 'circle', 'ellipse', 'polygon'].includes(tagName);
+        const closed = tagName === 'path'
+            ? (element.getAttribute('d') ?? '').toLowerCase().includes('z')
+            : ['rect', 'circle', 'ellipse', 'polygon'].includes(tagName);
 
-        return [{
-            points,
-            closed,
-            meta,
-        }];
+        return [{ points, closed, meta }];
     } catch {
-        // Fallback for elements that don't support getTotalLength
         return [];
     }
-}
-
-/** 
- * Extract paths from a path element, properly handling subpaths.
- * Uses the path's d attribute to detect M commands for subpath splitting.
- */
-function extractFromPathElement(
-    element: SVGPathElement,
-    localStep: number,
-    matrix: DOMMatrix | null,
-    meta: PathMeta
-): Path[] {
-    const d = element.getAttribute('d');
-    if (!d) return [];
-
-    // Get path segments using native API if available
-    // @ts-ignore - getPathData is not in types but available via polyfill or modern browsers
-    if (typeof element.getPathData === 'function') {
-        return extractUsingPathData(element, matrix, meta);
-    }
-
-    // Fallback: Parse d attribute to find subpath boundaries
-    return extractWithSubpathDetection(element, d, localStep, matrix, meta);
-}
-
-/** Extract using native getPathData if available */
-function extractUsingPathData(element: SVGPathElement, matrix: DOMMatrix | null, meta: PathMeta): Path[] {
-    // @ts-ignore
-    const pathData = element.getPathData({ normalize: true });
-    const paths: Path[] = [];
-
-    let currentPoints: Point[] = [];
-    let currentClosed = false;
-
-    for (const seg of pathData) {
-        if (seg.type === 'M') {
-            // Save previous path
-            if (currentPoints.length >= 2) {
-                paths.push({ points: currentPoints, closed: currentClosed, meta });
-            }
-            currentPoints = [applyMatrix(matrix, seg.values[0], seg.values[1])];
-            currentClosed = false;
-        } else if (seg.type === 'Z') {
-            currentClosed = true;
-        } else if (seg.type === 'L') {
-            currentPoints.push(applyMatrix(matrix, seg.values[0], seg.values[1]));
-        }
-        // Other segment types are normalized to L by { normalize: true }
-    }
-
-    if (currentPoints.length >= 2) {
-        paths.push({ points: currentPoints, closed: currentClosed, meta });
-    }
-
-    return paths;
-}
-
-/** Extract paths by detecting subpaths from M commands in d attribute */
-function extractWithSubpathDetection(
-    element: SVGPathElement,
-    d: string,
-    localStep: number,
-    matrix: DOMMatrix | null,
-    meta: PathMeta
-): Path[] {
-    // Find positions of M/m commands (subpath starts)
-    const subpathBoundaries = findSubpathBoundaries(d);
-
-    if (subpathBoundaries.length <= 1) {
-        // Single path - sample directly
-        try {
-            const totalLength = element.getTotalLength();
-            if (totalLength === 0) return [];
-
-            const points = samplePath(element, totalLength, localStep, matrix);
-            if (points.length < 2) return [];
-
-            const closed = d.toLowerCase().includes('z');
-            return [{ points, closed, meta }];
-        } catch {
-            return [];
-        }
-    }
-
-    // Multiple subpaths - need to create separate path elements for each
-    const paths: Path[] = [];
-
-    for (let i = 0; i < subpathBoundaries.length; i++) {
-        const start = subpathBoundaries[i];
-        const end = i + 1 < subpathBoundaries.length ? subpathBoundaries[i + 1] : d.length;
-        const subD = d.substring(start, end).trim();
-
-        if (!subD) continue;
-
-        // Create a temporary path element for this subpath
-        const tempPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        tempPath.setAttribute('d', subD);
-
-        // Append to same parent to get correct coordinate system
-        element.parentElement?.appendChild(tempPath);
-
-        try {
-            const totalLength = tempPath.getTotalLength();
-            if (totalLength > 0) {
-                const points = samplePath(tempPath, totalLength, localStep, matrix);
-                if (points.length >= 2) {
-                    const closed = subD.toLowerCase().includes('z');
-                    paths.push({ points, closed, meta });
-                }
-            }
-        } catch {
-            // Skip invalid subpaths
-        } finally {
-            tempPath.remove();
-        }
-    }
-
-    return paths;
-}
-
-/** Find character positions where M/m commands start new subpaths */
-function findSubpathBoundaries(d: string): number[] {
-    const boundaries: number[] = [];
-    const regex = /[Mm]/g;
-    let match;
-
-    while ((match = regex.exec(d)) !== null) {
-        boundaries.push(match.index);
-    }
-
-    return boundaries;
 }
 
 /**
